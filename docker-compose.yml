@@ -10,7 +10,7 @@ services:
       NEXT_PUBLIC_LLM_RUNTIME: transformers
       NEXT_PUBLIC_LLM_MODEL_ID: gemma-4-E2B-it-ONNX
       NEXT_PUBLIC_LLM_MODEL_URL: /models/gemma4-e2b-it-onnx
-      NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3001}
+      NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3010}
     volumes:
       - ./models:/app/public/models:ro
     restart: unless-stopped
@@ -19,11 +19,23 @@ services:
     build:
       context: ./stream-gateway
     ports:
-      - "${STREAM_GATEWAY_PORT:-3001}:3001"
+      - "${STREAM_GATEWAY_PORT:-3010}:3010"
     environment:
-      STREAM_GATEWAY_PORT: 3001
+      STREAM_GATEWAY_PORT: 3010
       STREAM_OUTPUT_DIR: /var/lib/v7rc-streams
       STREAM_DEFAULT_OUTPUT: ${STREAM_DEFAULT_OUTPUT:-mjpg}
     volumes:
       - ./streams:/var/lib/v7rc-streams
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3010/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped

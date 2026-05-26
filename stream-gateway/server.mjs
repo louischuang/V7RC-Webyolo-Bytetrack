@@ -4,7 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-const port = Number(process.env.STREAM_GATEWAY_PORT ?? 3001);
+const port = Number(process.env.STREAM_GATEWAY_PORT ?? 3010);
 const outputDir = process.env.STREAM_OUTPUT_DIR ?? "/var/lib/v7rc-streams";
 const defaultOutput = process.env.STREAM_DEFAULT_OUTPUT === "hls" ? "hls" : "mjpg";
 const allowedSchemes = new Set(["rtsp:", "http:", "https:"]);

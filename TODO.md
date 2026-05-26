@@ -50,10 +50,10 @@
 - [x] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
 - [x] Output MJPG endpoint for fastest YOLO/canvas integration.
 - [x] Output HLS endpoint for lower bandwidth and better browser compatibility.
-- [ ] Store temporary HLS segments outside the app image.
+- [x] Store temporary HLS segments outside the app image.
 - [x] Add stream lifecycle cleanup for stopped or stale sessions.
 - [x] Add healthcheck endpoint for the gateway.
-- [ ] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
+- [x] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
 - [ ] Document that WebRTC is the later low-latency path for robot closed-loop control.
 - [ ] Benchmark RTSP->MJPG latency and CPU load.
 - [ ] Benchmark RTSP->HLS latency and CPU load.
@@ -142,10 +142,10 @@
 - [ ] Build Next.js standalone output.
 - [ ] Create production Docker image.
 - [ ] Create Docker Compose production example.
-- [ ] Add optional stream-gateway container to Docker Compose.
-- [ ] Add gateway environment variables for allowed inputs, output mode, and segment directory.
+- [x] Add optional stream-gateway container to Docker Compose.
+- [x] Add gateway environment variables for allowed inputs, output mode, and segment directory.
 - [ ] Add healthcheck endpoint.
-- [ ] Add stream-gateway healthcheck.
+- [x] Add stream-gateway healthcheck.
 - [ ] Verify app starts in container.
 - [ ] Verify gateway starts in container.
 - [ ] Verify camera works from Chrome against container-hosted app.

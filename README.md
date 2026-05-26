@@ -48,7 +48,7 @@ The app can switch between `Camera`, `MJPG`, `RTSP`, and `YouTube` source modes.
 
 Implemented gateway MVP:
 
-- `stream-gateway` Docker service runs on `${STREAM_GATEWAY_PORT:-3001}`.
+- `stream-gateway` Docker service runs on `${STREAM_GATEWAY_PORT:-3010}`.
 - RTSP and YouTube modes call the gateway API and receive a browser-readable stream URL.
 - The default gateway output is MJPG because it plugs into the existing image-frame YOLO path.
 - YouTube support uses `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
@@ -58,8 +58,8 @@ Implemented gateway MVP:
 The gateway runs next to the Next.js app in Docker Compose and exposes browser-compatible URLs such as:
 
 ```text
-http://localhost:3001/streams/robot-front.mjpg
-http://localhost:3001/streams/robot-front/index.m3u8
+http://localhost:3010/streams/robot-front.mjpg
+http://localhost:3010/streams/robot-front/index.m3u8
 ```
 
 More details: [docs/stream-gateway.md](docs/stream-gateway.md).

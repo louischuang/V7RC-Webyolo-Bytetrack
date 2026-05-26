@@ -16,6 +16,8 @@ type GatewayStreamResponse = {
   url: string;
 };
 
+type GatewayStatus = "idle" | "checking" | "ready" | "connecting" | "streaming" | "error";
+
 type RuntimeStatus = {
   label: string;
   state: "idle" | "loading" | "ready" | "error";
@@ -49,7 +51,7 @@ const runtimeDefaults = {
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
   llmRuntime: defaultLlmRuntime,
-  streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3001",
+  streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3010",
 };
 
 const legacyDefaultSystemPrompt =
@@ -108,6 +110,8 @@ export default function Home() {
     rtsp: "",
     youtube: "",
   });
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>("idle");
+  const [gatewayDetail, setGatewayDetail] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
   const [fps, setFps] = useState(0);
   const [yoloMs, setYoloMs] = useState(0);
@@ -234,6 +238,8 @@ export default function Home() {
       void stopGatewayStream(gatewayStreamIdRef.current);
       gatewayStreamIdRef.current = null;
     }
+    setGatewayStatus("idle");
+    setGatewayDetail("");
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -283,8 +289,12 @@ export default function Home() {
       }
 
       if (sourceMode === "rtsp" || sourceMode === "youtube") {
+        setGatewayStatus("connecting");
+        setGatewayDetail("Requesting stream gateway conversion...");
         const gatewayStream = await createGatewayStream(sourceMode, url);
         gatewayStreamIdRef.current = gatewayStream.id;
+        setGatewayStatus("streaming");
+        setGatewayDetail(`Gateway ${gatewayStream.output.toUpperCase()} stream ${gatewayStream.id}`);
         if (gatewayStream.output === "mjpg") {
           if (!imageRef.current) {
             throw new Error("Gateway image surface is not ready.");
@@ -308,6 +318,10 @@ export default function Home() {
     } catch (error) {
       const message = error instanceof Error ? error.message : `Could not start ${sourceMode.toUpperCase()} stream.`;
       setCameraError(message);
+      if (sourceMode === "rtsp" || sourceMode === "youtube") {
+        setGatewayStatus("error");
+        setGatewayDetail(message);
+      }
       setCameraState("error");
     }
   }, [sourceMode, stopCamera, streamUrls]);
@@ -604,6 +618,35 @@ export default function Home() {
     }));
   }, []);
 
+  const checkGatewayHealth = useCallback(async () => {
+    setGatewayStatus("checking");
+    setGatewayDetail(`Checking ${runtimeDefaults.streamGatewayUrl}`);
+
+    try {
+      const health = await getGatewayHealth();
+      setGatewayStatus("ready");
+      setGatewayDetail(`Gateway ready, active sessions ${health.sessions}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Stream gateway is not available.";
+      setGatewayStatus("error");
+      setGatewayDetail(message);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sourceMode === "rtsp" || sourceMode === "youtube") {
+      queueMicrotask(() => {
+        void checkGatewayHealth();
+      });
+      return;
+    }
+
+    queueMicrotask(() => {
+      setGatewayStatus("idle");
+      setGatewayDetail("");
+    });
+  }, [checkGatewayHealth, sourceMode]);
+
   useEffect(() => {
     const detect = async () => {
       const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
@@ -766,6 +809,11 @@ export default function Home() {
                 placeholder={getSourcePlaceholder(sourceMode)}
               />
               <small>{cameraDetail}</small>
+              {sourceMode === "rtsp" || sourceMode === "youtube" ? (
+                <small className={`gateway-detail ${gatewayStatus}`}>
+                  {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
+                </small>
+              ) : null}
             </label>
           )}
 
@@ -1051,6 +1099,22 @@ function getSourcePlaceholder(sourceMode: Exclude<SourceMode, "camera">) {
   }
 
   return "https://www.youtube.com/watch?v=...";
+}
+
+async function getGatewayHealth(): Promise<{ ok: boolean; sessions: number }> {
+  const response = await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/health`, {
+    cache: "no-store",
+  });
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; sessions?: number; error?: string } | null;
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Stream gateway health returned ${response.status}.`);
+  }
+
+  return {
+    ok: true,
+    sessions: typeof payload.sessions === "number" ? payload.sessions : 0,
+  };
 }
 
 async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string): Promise<GatewayStreamResponse> {

@@ -8,12 +8,12 @@ RUN apk add --no-cache ffmpeg python3 py3-pip \
 COPY package.json ./
 COPY server.mjs ./
 
-ENV STREAM_GATEWAY_PORT=3001
+ENV STREAM_GATEWAY_PORT=3010
 ENV STREAM_OUTPUT_DIR=/var/lib/v7rc-streams
 ENV STREAM_DEFAULT_OUTPUT=mjpg
 
 RUN mkdir -p /var/lib/v7rc-streams
 
-EXPOSE 3001
+EXPOSE 3010
 
 CMD ["node", "server.mjs"]

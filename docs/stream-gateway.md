@@ -175,17 +175,17 @@ services:
     volumes:
       - ./models:/app/public/models:ro
     environment:
-      NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3001}
+      NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3010}
 
   stream-gateway:
     build:
       context: ./stream-gateway
     ports:
-      - "${STREAM_GATEWAY_PORT:-3001}:3001"
+      - "${STREAM_GATEWAY_PORT:-3010}:3010"
     volumes:
       - ./streams:/var/lib/v7rc-streams
     environment:
-      STREAM_GATEWAY_PORT: 3001
+      STREAM_GATEWAY_PORT: 3010
       STREAM_OUTPUT_DIR: /var/lib/v7rc-streams
       STREAM_DEFAULT_OUTPUT: ${STREAM_DEFAULT_OUTPUT:-mjpg}
 ```

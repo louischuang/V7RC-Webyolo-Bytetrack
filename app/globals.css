@@ -173,6 +173,20 @@ h2 {
   font-size: 11px;
 }
 
+.gateway-detail.ready,
+.gateway-detail.streaming {
+  color: #99f6e4;
+}
+
+.gateway-detail.checking,
+.gateway-detail.connecting {
+  color: #fde68a;
+}
+
+.gateway-detail.error {
+  color: #fecdd3;
+}
+
 select,
 input {
   min-height: 38px;
