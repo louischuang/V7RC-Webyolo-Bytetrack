@@ -474,22 +474,27 @@ function drawDetections(
   const scaleY = drawHeight / video.videoHeight;
 
   for (const detection of detections) {
+    const boxColor = "#2dd4bf";
     const x = offsetX + detection.box.x * scaleX;
     const y = offsetY + detection.box.y * scaleY;
     const width = detection.box.width * scaleX;
     const height = detection.box.height * scaleY;
     const label = `${detection.label} ${detection.id} ${detection.confidence.toFixed(2)}`;
-    const labelWidth = Math.max(92, context.measureText(label).width + 16);
     const labelY = y > 30 ? y - 28 : y + 4;
 
-    context.strokeStyle = "#2dd4bf";
+    context.strokeStyle = boxColor;
     context.lineWidth = 2;
     context.strokeRect(x, y, width, height);
 
-    context.fillStyle = "rgba(15, 23, 42, 0.92)";
-    context.fillRect(x, labelY, labelWidth, 24);
-    context.fillStyle = "#ccfbf1";
+    context.fillStyle = boxColor;
+    context.fillRect(x, labelY, width, 24);
+    context.fillStyle = "#020617";
     context.font = "12px ui-sans-serif, system-ui";
+    context.save();
+    context.beginPath();
+    context.rect(x, labelY, width, 24);
+    context.clip();
     context.fillText(label, x + 8, labelY + 16);
+    context.restore();
   }
 }
