@@ -7,6 +7,10 @@ import { randomUUID } from "node:crypto";
 const port = Number(process.env.STREAM_GATEWAY_PORT ?? 3010);
 const outputDir = process.env.STREAM_OUTPUT_DIR ?? "/var/lib/v7rc-streams";
 const defaultOutput = process.env.STREAM_DEFAULT_OUTPUT === "hls" ? "hls" : "mjpg";
+const ytdlpFormat = process.env.YTDLP_FORMAT || "best[height<=720][ext=mp4]/best[height<=720]/best";
+const ytdlpTimeoutMs = Number(process.env.YTDLP_TIMEOUT_MS ?? 45000);
+const ytdlpCookiesFile = process.env.YTDLP_COOKIES_FILE || "";
+const ytdlpUserAgent = process.env.YTDLP_USER_AGENT || "";
 const allowedSchemes = new Set(["rtsp:", "http:", "https:"]);
 const sessions = new Map();
 
@@ -33,6 +37,22 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request);
       const created = await createStream(body, request);
       sendJson(response, 201, created);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/youtube/resolve") {
+      const body = await readJson(request);
+      const sourceUrl = parseHttpUrl(body?.url, "YouTube URL");
+      const startedAt = performance.now();
+      const resolvedUrl = await resolveYoutubeUrl(sourceUrl.href);
+      const resolved = new URL(resolvedUrl);
+      sendJson(response, 200, {
+        ok: true,
+        protocol: resolved.protocol,
+        mediaHost: resolved.host,
+        durationMs: Math.round(performance.now() - startedAt),
+        format: ytdlpFormat,
+      });
       return;
     }
 
@@ -84,7 +104,7 @@ server.listen(port, "0.0.0.0", () => {
 
 async function createStream(body, request) {
   const sourceType = normalizeSourceType(body?.sourceType);
-  const sourceUrl = parseInputUrl(body?.url);
+  const sourceUrl = sourceType === "youtube" ? parseHttpUrl(body?.url, "YouTube URL") : parseInputUrl(body?.url);
   const output = body?.output === "hls" ? "hls" : defaultOutput;
   const id = safeId(body?.id) || randomUUID();
   const resolvedUrl = sourceType === "youtube" ? await resolveYoutubeUrl(sourceUrl.href) : sourceUrl.href;
@@ -161,13 +181,34 @@ function makePublicStreamUrl(request, id, output) {
 }
 
 async function resolveYoutubeUrl(url) {
-  const result = await runCommand("yt-dlp", ["-g", "-f", "best[height<=720]/best", url], 30000);
+  const result = await runCommand("yt-dlp", youtubeResolveArgs(url), ytdlpTimeoutMs);
   const resolved = result.stdout.split(/\r?\n/u).find(Boolean);
   if (!resolved) {
     throw new Error(result.stderr || "yt-dlp did not return a playable URL.");
   }
 
   return resolved;
+}
+
+function youtubeResolveArgs(url) {
+  const args = ["--no-playlist", "--no-warnings", "-g", "-f", ytdlpFormat];
+  if (ytdlpCookiesFile && existsSync(ytdlpCookiesFile)) {
+    args.push("--cookies", ytdlpCookiesFile);
+  }
+  if (ytdlpUserAgent) {
+    args.push("--user-agent", ytdlpUserAgent);
+  }
+  args.push(url);
+  return args;
+}
+
+function parseHttpUrl(value, label) {
+  const parsed = parseInputUrl(value);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${label} must use http:// or https://.`);
+  }
+
+  return parsed;
 }
 
 function startHls(session) {

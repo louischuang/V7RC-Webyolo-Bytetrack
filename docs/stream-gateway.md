@@ -9,12 +9,14 @@ Implemented now:
 - `POST /api/streams` creates a stream session.
 - `GET /api/streams` lists active stream sessions.
 - `GET /api/streams/{id}` returns session status, client count, masked input URL, and recent logs.
+- `POST /api/youtube/resolve` checks whether `yt-dlp` can resolve a YouTube URL before starting a stream.
 - `DELETE /api/streams/{id}` stops a session.
 - `GET /health` reports gateway health.
 - `GET /streams/{id}.mjpg` starts an ffmpeg MJPG response for that session.
 - `GET /streams/{id}/index.m3u8` and segment paths serve HLS files when `output=hls`.
 - RTSP inputs use ffmpeg with TCP transport.
 - YouTube inputs are resolved with `yt-dlp -g`, then sent to ffmpeg.
+- YouTube resolver settings are configurable with `YTDLP_FORMAT`, `YTDLP_TIMEOUT_MS`, `YTDLP_COOKIES_FILE`, and `YTDLP_USER_AGENT`.
 - The frontend calls the gateway for RTSP and YouTube modes and uses the returned MJPG URL.
 - The frontend polls active gateway session status and displays client/log/error details under the source URL field.
 
@@ -144,6 +146,29 @@ Health:
 GET /health
 ```
 
+Check YouTube resolution:
+
+```http
+POST /api/youtube/resolve
+Content-Type: application/json
+
+{
+  "url": "https://www.youtube.com/watch?v=..."
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "protocol": "https:",
+  "mediaHost": "rr1---sn-...",
+  "durationMs": 1234,
+  "format": "best[height<=720][ext=mp4]/best[height<=720]/best"
+}
+```
+
 ## Output Options
 
 ### MJPG
@@ -235,6 +260,7 @@ The current frontend has source modes for Camera, MJPG, RTSP, and YouTube.
 - Validate and restrict allowed URL schemes.
 - Consider allowlists for robot subnets or known camera hosts.
 - YouTube ingestion must respect source terms and deployment policy.
+- Some YouTube sources may require cookies or a specific user-agent. Mount a cookies file into the gateway and set `YTDLP_COOKIES_FILE` only when the deployment policy allows it.
 - Avoid logging credentials embedded in RTSP URLs.
 - Add authentication before production deployment outside a trusted LAN.
 

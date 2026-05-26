@@ -48,6 +48,8 @@
 - [x] Define gateway API contract for creating/stopping streams.
 - [x] Add RTSP input support.
 - [x] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
+- [x] Add YouTube URL preflight check through `yt-dlp`.
+- [x] Add configurable YouTube resolver format, timeout, cookies file, and user-agent.
 - [x] Output MJPG endpoint for fastest YOLO/canvas integration.
 - [x] Output HLS endpoint for lower bandwidth and better browser compatibility.
 - [x] Store temporary HLS segments outside the app image.

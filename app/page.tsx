@@ -25,6 +25,14 @@ type GatewaySessionStatus = {
   logs?: Array<{ at: string; message: string }>;
 };
 
+type YoutubeResolveResult = {
+  ok: boolean;
+  protocol: string;
+  mediaHost: string;
+  durationMs: number;
+  format: string;
+};
+
 type GatewayStatus = "idle" | "checking" | "ready" | "connecting" | "streaming" | "error";
 
 type RuntimeStatus = {
@@ -645,6 +653,28 @@ export default function Home() {
     }
   }, []);
 
+  const checkYoutubeSource = useCallback(async () => {
+    const url = streamUrls.youtube.trim();
+    if (!url) {
+      setGatewayStatus("error");
+      setGatewayDetail("YouTube URL is required.");
+      return;
+    }
+
+    setGatewayStatus("connecting");
+    setGatewayDetail("Resolving YouTube URL with yt-dlp...");
+
+    try {
+      const result = await resolveYoutubeSource(url);
+      setGatewayStatus("ready");
+      setGatewayDetail(`YouTube resolved via ${result.mediaHost} in ${formatDuration(result.durationMs)}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not resolve YouTube URL.";
+      setGatewayStatus("error");
+      setGatewayDetail(message);
+    }
+  }, [streamUrls.youtube]);
+
   useEffect(() => {
     if (sourceMode === "rtsp" || sourceMode === "youtube") {
       queueMicrotask(() => {
@@ -879,6 +909,16 @@ export default function Home() {
           >
             {cameraState === "streaming" ? "Stop" : "Start"}
           </button>
+          {sourceMode === "youtube" ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void checkYoutubeSource()}
+              disabled={cameraState === "requesting" || gatewayStatus === "connecting"}
+            >
+              Check
+            </button>
+          ) : null}
           {sourceMode === "camera" ? (
             <label className="inline-toggle">
               <input
@@ -1194,6 +1234,29 @@ async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string):
     output: payload.output === "hls" ? "hls" : "mjpg",
     status: payload.status || "ready",
     url: payload.url,
+  };
+}
+
+async function resolveYoutubeSource(url: string): Promise<YoutubeResolveResult> {
+  const response = await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/api/youtube/resolve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url }),
+  });
+  const payload = (await response.json().catch(() => null)) as Partial<YoutubeResolveResult> & { error?: string } | null;
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `YouTube resolver returned ${response.status}.`);
+  }
+
+  return {
+    ok: true,
+    protocol: payload.protocol || "",
+    mediaHost: payload.mediaHost || "unknown host",
+    durationMs: typeof payload.durationMs === "number" ? payload.durationMs : 0,
+    format: payload.format || "",
   };
 }
 
