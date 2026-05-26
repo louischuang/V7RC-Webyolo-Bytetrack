@@ -137,6 +137,27 @@ docker compose up --build
 
 Chrome downloads the model files from the web app and runs inference locally. Camera access works on `localhost`; production hostnames must use HTTPS for browser camera permissions.
 
+## Tracking Runtime
+
+ByteTrack runs in the browser after YOLO inference. The current implementation keeps the tracker in TypeScript so it can share the same frame coordinates as the overlay and object list.
+
+Config:
+
+```env
+NEXT_PUBLIC_TRACK_HIGH_THRESH=0.6
+NEXT_PUBLIC_TRACK_LOW_THRESH=0.1
+NEXT_PUBLIC_TRACK_MATCH_THRESH=0.8
+NEXT_PUBLIC_TRACK_BUFFER_FRAMES=30
+```
+
+Behavior:
+
+- High-confidence detections start and update tracks.
+- Low-confidence detections can recover unmatched active tracks.
+- Matching uses class-aware IoU association with ByteTrack-style cost threshold semantics.
+- Tracks stay alive for `NEXT_PUBLIC_TRACK_BUFFER_FRAMES` missed detection frames.
+- UI track IDs use `T1`, `T2`, etc.
+
 ## Verification
 
 Check model availability:

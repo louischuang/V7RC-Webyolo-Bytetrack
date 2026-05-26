@@ -65,3 +65,9 @@ docker compose up --build
 ```
 
 Chrome camera access works on `localhost`. For production hosts, serve over HTTPS.
+
+## Runtime Notes
+
+- YOLO inference runs in Chrome with ONNX Runtime Web.
+- ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
+- Gemma4-E2B is planned as browser-local WebGPU inference, not a backend API.

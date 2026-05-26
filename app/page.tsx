@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ByteTracker, type Track } from "./lib/bytetrack";
 import { type Detection, YoloDetector } from "./lib/yolo";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
@@ -33,7 +34,15 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<YoloDetector | null>(null);
-  const detectionsRef = useRef<Detection[]>([]);
+  const trackerRef = useRef<ByteTracker>(
+    new ByteTracker({
+      highThreshold: Number(process.env.NEXT_PUBLIC_TRACK_HIGH_THRESH ?? 0.6),
+      lowThreshold: Number(process.env.NEXT_PUBLIC_TRACK_LOW_THRESH ?? 0.1),
+      matchThreshold: Number(process.env.NEXT_PUBLIC_TRACK_MATCH_THRESH ?? 0.8),
+      bufferFrames: Number(process.env.NEXT_PUBLIC_TRACK_BUFFER_FRAMES ?? 30),
+    }),
+  );
+  const tracksRef = useRef<Track[]>([]);
   const detectLoopRef = useRef<number | null>(null);
   const detectionFrameRef = useRef(0);
   const detectingRef = useRef(false);
@@ -41,10 +50,10 @@ export default function Home() {
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
-  const [detections, setDetections] = useState<Detection[]>([]);
+  const [tracks, setTracks] = useState<Track[]>([]);
   const [fps, setFps] = useState(0);
   const [yoloMs, setYoloMs] = useState(0);
-  const [trackMs] = useState(0);
+  const [trackMs, setTrackMs] = useState(0);
   const [yoloStatus, setYoloStatus] = useState<RuntimeStatus>({
     label: "YOLO11n",
     state: "loading",
@@ -64,13 +73,13 @@ export default function Home() {
 
   const trackRows: TrackRow[] = useMemo(
     () =>
-      detections.map((detection) => ({
-        id: detection.id,
-        label: detection.label,
-        confidence: detection.confidence,
-        ageMs: 0,
+      tracks.map((track) => ({
+        id: track.id,
+        label: track.label,
+        confidence: track.confidence,
+        ageMs: track.missed,
       })),
-    [detections],
+    [tracks],
   );
 
   const stopCamera = useCallback(() => {
@@ -80,8 +89,9 @@ export default function Home() {
       videoRef.current.srcObject = null;
     }
     setCameraState((state) => (state === "error" ? "error" : "ready"));
-    setDetections([]);
-    detectionsRef.current = [];
+    trackerRef.current.reset();
+    setTracks([]);
+    tracksRef.current = [];
     setFps(0);
   }, []);
 
@@ -214,9 +224,13 @@ export default function Home() {
 
           try {
             const nextDetections = await detector.detect(video);
-            detectionsRef.current = nextDetections;
-            setDetections(nextDetections);
             setYoloMs(performance.now() - startedAt);
+
+            const trackStartedAt = performance.now();
+            const nextTracks = trackerRef.current.update(nextDetections);
+            tracksRef.current = nextTracks;
+            setTracks(nextTracks);
+            setTrackMs(performance.now() - trackStartedAt);
           } catch (error) {
             const message = error instanceof Error ? error.message : "Unknown YOLO inference error.";
             setYoloStatus((status) => ({
@@ -266,7 +280,7 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
-        drawDetections(context, detectionsRef.current, video, rect.width, rect.height);
+        drawDetections(context, tracksRef.current, video, rect.width, rect.height);
         context.restore();
 
         frameCount += 1;
