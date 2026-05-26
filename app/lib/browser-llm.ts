@@ -15,6 +15,7 @@ export type BrowserLlmConfig = {
 
 type WebLlmModule = typeof import("@mlc-ai/web-llm");
 type MlcEngine = Awaited<ReturnType<WebLlmModule["CreateMLCEngine"]>>;
+type AppConfig = import("@mlc-ai/web-llm").AppConfig;
 type WebGpuNavigator = Navigator & {
   gpu?: {
     requestAdapter: () => Promise<{
@@ -67,16 +68,19 @@ export class BrowserLlm {
 
   async load(onProgress: (progress: LoadProgress) => void) {
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
-    const appConfig = {
+    const appConfig: AppConfig = {
       model_list: [
         {
           model: this.config.modelUrl,
           model_id: this.config.modelId,
           model_lib: this.config.modelLibUrl,
           required_features: ["shader-f16"],
+          overrides: {
+            sliding_window_size: -1,
+          },
         },
       ],
-      useIndexedDBCache: true,
+      cacheBackend: "indexeddb",
     };
 
     this.engine = await CreateMLCEngine(this.config.modelId, {
