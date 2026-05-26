@@ -48,6 +48,8 @@ const defaultSystemPrompt =
 const defaultFixedPrompt =
   "Focus on navigable space, nearby people or obstacles, tracked object IDs, and any motion-relevant risk.";
 
+const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
+
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -93,6 +95,8 @@ export default function Home() {
   const [includeFrame, setIncludeFrame] = useState(true);
   const [loopRunning, setLoopRunning] = useState(false);
   const [lastInferenceMs, setLastInferenceMs] = useState<number | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -130,6 +134,57 @@ export default function Home() {
       ? "iPhone camera selected"
       : `${devices.length} camera${devices.length > 1 ? "s" : ""} available`;
   }, [devices, selectedCamera]);
+
+  useEffect(() => {
+    let cachedSettings: Partial<{
+      includeFrame: boolean;
+      systemPrompt: string;
+      fixedPrompt: string;
+    }> | null = null;
+
+    try {
+      const cached = window.localStorage.getItem(gemmaSettingsStorageKey);
+      if (!cached) {
+        return;
+      }
+
+      cachedSettings = JSON.parse(cached) as Partial<{
+        includeFrame: boolean;
+        systemPrompt: string;
+        fixedPrompt: string;
+      }>;
+    } catch {
+      window.localStorage.removeItem(gemmaSettingsStorageKey);
+    } finally {
+      queueMicrotask(() => {
+        if (typeof cachedSettings?.includeFrame === "boolean") {
+          setIncludeFrame(cachedSettings.includeFrame);
+        }
+        if (typeof cachedSettings?.systemPrompt === "string") {
+          setSystemPrompt(cachedSettings.systemPrompt);
+        }
+        if (typeof cachedSettings?.fixedPrompt === "string") {
+          setFixedPrompt(cachedSettings.fixedPrompt);
+        }
+        setSettingsHydrated(true);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydrated) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      gemmaSettingsStorageKey,
+      JSON.stringify({
+        includeFrame,
+        systemPrompt,
+        fixedPrompt,
+      }),
+    );
+  }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -586,14 +641,28 @@ export default function Home() {
           <StatusCard
             status={llmStatus}
             action={
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={loadGemma}
-                disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
-              >
-                {llmState === "ready" ? "Loaded" : "Load"}
-              </button>
+              <div className="status-actions">
+                <button
+                  className="icon-button compact-icon-button"
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  title="Gemma settings"
+                  aria-label="Gemma settings"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
+                    <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
+                  </svg>
+                </button>
+                <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={loadGemma}
+                  disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
+                >
+                  {llmState === "ready" ? "Loaded" : "Load"}
+                </button>
+              </div>
             }
             progress={llmProgress}
           />
@@ -623,17 +692,6 @@ export default function Home() {
       </section>
 
       <section className="chat-panel">
-        <div className="prompt-panel">
-          <label className="prompt-field">
-            <span>System Prompt</span>
-            <textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} />
-          </label>
-          <label className="prompt-field">
-            <span>Fixed Prompt</span>
-            <textarea value={fixedPrompt} onChange={(event) => setFixedPrompt(event.target.value)} rows={3} />
-          </label>
-        </div>
-
         <div className="conversation-panel">
           <div className="chat-log">
             {chatMessages.map((message, index) => (
@@ -643,14 +701,6 @@ export default function Home() {
             ))}
           </div>
           <div className="loop-controls">
-            <label className="frame-toggle">
-              <input
-                type="checkbox"
-                checked={includeFrame}
-                onChange={(event) => setIncludeFrame(event.target.checked)}
-              />
-              <span>Include current frame</span>
-            </label>
             {lastInferenceMs !== null && <span className="loop-timing">Last run {formatDuration(lastInferenceMs)}</span>}
             <button type="button" onClick={toggleInferenceLoop} disabled={llmState === "loading"}>
               {loopRunning ? "停止" : "開始"}
@@ -658,6 +708,54 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {settingsOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
+          <div
+            aria-labelledby="gemma-settings-title"
+            className="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-title">
+              <h2 id="gemma-settings-title">Gemma4-E2B Settings</h2>
+              <button
+                className="icon-button compact-icon-button"
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                title="Close settings"
+                aria-label="Close settings"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="m6 6 12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+            <label className="frame-toggle settings-toggle">
+              <input
+                type="checkbox"
+                checked={includeFrame}
+                onChange={(event) => setIncludeFrame(event.target.checked)}
+              />
+              <span>Include current frame</span>
+            </label>
+            <label className="prompt-field">
+              <span>System Prompt</span>
+              <textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={6} />
+            </label>
+            <label className="prompt-field">
+              <span>Fixed Prompt</span>
+              <textarea value={fixedPrompt} onChange={(event) => setFixedPrompt(event.target.value)} rows={4} />
+            </label>
+            <div className="modal-actions">
+              <button className="primary-button" type="button" onClick={() => setSettingsOpen(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

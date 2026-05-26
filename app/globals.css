@@ -60,6 +60,9 @@ button {
 .metric-strip,
 .status-title,
 .status-heading,
+.status-actions,
+.modal-title,
+.modal-actions,
 .loop-controls,
 .inline-toggle,
 .frame-toggle {
@@ -168,6 +171,16 @@ input {
   background: #0e1218;
   color: var(--text);
   padding: 0 12px;
+}
+
+.icon-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .primary-button:disabled,
@@ -281,6 +294,11 @@ input {
   gap: 8px;
 }
 
+.status-actions {
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
 .status-heading {
   gap: 8px;
   min-width: 0;
@@ -315,6 +333,14 @@ input {
   min-height: 30px;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.compact-icon-button {
+  display: inline-grid;
+  min-width: 32px;
+  min-height: 30px;
+  place-items: center;
+  padding: 0;
 }
 
 .object-list {
@@ -361,13 +387,12 @@ input {
 
 .chat-panel {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin: 0 16px 16px;
   padding: 12px;
 }
 
-.prompt-panel,
 .conversation-panel {
   display: grid;
   gap: 10px;
@@ -453,6 +478,46 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 7, 10, 0.72);
+  padding: 18px;
+}
+
+.settings-modal {
+  display: grid;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  gap: 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10141b;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  padding: 16px;
+}
+
+.modal-title {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-title h2 {
+  font-size: 16px;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+}
+
+.settings-toggle {
+  justify-content: flex-start;
 }
 
 .frame-toggle {
