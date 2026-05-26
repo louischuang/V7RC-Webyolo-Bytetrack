@@ -78,6 +78,12 @@ This downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` to:
 models/gemma4-e2b-it/
 ```
 
+It also creates a Hugging Face compatible local path because WebLLM expects `/resolve/main/...` under model URLs:
+
+```text
+models/gemma4-e2b-it/resolve/main -> models/gemma4-e2b-it
+```
+
 Docker Compose mounts `./models` into `/app/public/models`, so production can serve:
 
 ```env

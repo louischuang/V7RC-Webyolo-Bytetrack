@@ -130,6 +130,12 @@ bash scripts/prepare-gemma4-e2b-webllm.sh
 
 The helper downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` with `huggingface_hub` into `models/gemma4-e2b-it/` and creates a local development symlink at `public/models/gemma4-e2b-it`.
 
+WebLLM expects Hugging Face style URLs such as `/resolve/main/mlc-chat-config.json`, so the helper also creates:
+
+```text
+models/gemma4-e2b-it/resolve/main -> models/gemma4-e2b-it
+```
+
 ### Browser Cache Storage
 
 Do not use JavaScript `localStorage` for Gemma model files. `localStorage` is too small and string-only, so it is suitable for settings but not model weights.

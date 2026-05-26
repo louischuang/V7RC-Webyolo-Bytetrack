@@ -33,6 +33,10 @@ PY
 rm -rf "${PUBLIC_LINK}"
 ln -s "../../models/gemma4-e2b-it" "${PUBLIC_LINK}"
 
+mkdir -p "${MODEL_DIR}/resolve"
+rm -rf "${MODEL_DIR}/resolve/main"
+ln -s ".." "${MODEL_DIR}/resolve/main"
+
 cat <<EOF
 Gemma4-E2B WebLLM artifact ready:
   ${MODEL_DIR}
@@ -43,4 +47,7 @@ Local dev symlink:
 Use these env values for local/offline serving:
   NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
   NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+
+HF-compatible local path:
+  /models/gemma4-e2b-it/resolve/main/mlc-chat-config.json
 EOF
