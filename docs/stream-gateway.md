@@ -1,5 +1,27 @@
 # Stream Gateway Plan
 
+## Status
+
+The first gateway MVP is implemented under `stream-gateway/` and wired into `docker-compose.yml`.
+
+Implemented now:
+
+- `POST /api/streams` creates a stream session.
+- `DELETE /api/streams/{id}` stops a session.
+- `GET /health` reports gateway health.
+- `GET /streams/{id}.mjpg` starts an ffmpeg MJPG response for that session.
+- `GET /streams/{id}/index.m3u8` and segment paths serve HLS files when `output=hls`.
+- RTSP inputs use ffmpeg with TCP transport.
+- YouTube inputs are resolved with `yt-dlp -g`, then sent to ffmpeg.
+- The frontend calls the gateway for RTSP and YouTube modes and uses the returned MJPG URL.
+
+Still planned:
+
+- HLS player integration in the frontend.
+- Authentication/allowlists before untrusted network deployment.
+- WebRTC mode for low-latency robot control.
+- Runtime UI for gateway session health and conversion logs.
+
 ## Goal
 
 Add an optional `stream-gateway` service that converts sources Chrome cannot use directly into browser-compatible streams for the existing YOLO, ByteTrack, and Gemma4 perception loop.
@@ -44,14 +66,14 @@ Chrome app
   └─ Gemma4-E2B frame capture
 ```
 
-## Recommended Implementation Order
+## Implementation Order
 
-1. Add Docker Compose `stream-gateway` service.
-2. Start with ffmpeg because it is easy to package and debug.
-3. Support RTSP input first.
-4. Output MJPG first for fast integration with the existing `<img>` path.
-5. Add HLS output for lower bandwidth.
-6. Add YouTube support through `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
+1. Add Docker Compose `stream-gateway` service. Done.
+2. Start with ffmpeg because it is easy to package and debug. Done.
+3. Support RTSP input first. Done.
+4. Output MJPG first for fast integration with the existing `<img>` path. Done.
+5. Add HLS output for lower bandwidth. Gateway API done; frontend player still planned.
+6. Add YouTube support through `yt-dlp` plus ffmpeg when allowed by the source and deployment policy. Done.
 7. Add cleanup for stale streams and temporary files.
 8. Benchmark latency and CPU use.
 9. Evaluate WebRTC mode for low-latency robot control.
@@ -142,7 +164,7 @@ Cons:
 
 ## Docker Compose Shape
 
-Target shape:
+Current shape:
 
 ```yaml
 services:
@@ -152,6 +174,8 @@ services:
       - "${APP_PORT:-3000}:3000"
     volumes:
       - ./models:/app/public/models:ro
+    environment:
+      NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3001}
 
   stream-gateway:
     build:
@@ -161,19 +185,20 @@ services:
     volumes:
       - ./streams:/var/lib/v7rc-streams
     environment:
+      STREAM_GATEWAY_PORT: 3001
       STREAM_OUTPUT_DIR: /var/lib/v7rc-streams
-      STREAM_DEFAULT_OUTPUT: mjpg
+      STREAM_DEFAULT_OUTPUT: ${STREAM_DEFAULT_OUTPUT:-mjpg}
 ```
 
 ## Frontend Integration Plan
 
-The current frontend already has source modes for Camera, MJPG, RTSP, and YouTube. The next integration step is:
+The current frontend has source modes for Camera, MJPG, RTSP, and YouTube.
 
-- If mode is `MJPG`, keep direct URL support.
-- If mode is `RTSP`, call the gateway API with the entered URL and use the returned browser URL.
-- If mode is `YouTube`, call the gateway API with the entered URL and use the returned browser URL.
-- Show gateway startup state in the source control area.
-- Stop the gateway stream when the user presses Stop or switches source modes.
+- If mode is `MJPG`, direct URL support is kept.
+- If mode is `RTSP`, the app calls the gateway API with the entered URL and uses the returned MJPG URL.
+- If mode is `YouTube`, the app calls the gateway API with the entered URL and uses the returned MJPG URL.
+- The app stops gateway sessions when the user presses Stop or switches source modes.
+- Gateway startup state and logs in the UI are still planned.
 
 ## Security and Policy Notes
 

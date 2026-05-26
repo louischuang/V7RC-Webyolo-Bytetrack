@@ -46,14 +46,16 @@ Gemma model downloads are cached by WebLLM in browser-managed storage such as In
 
 The app can switch between `Camera`, `MJPG`, `RTSP`, and `YouTube` source modes. Camera uses Chrome `getUserMedia()`. MJPG can be read directly through a raw image stream surface. RTSP and YouTube usually need a stream gateway because Chrome cannot directly play native `rtsp://` URLs or YouTube watch pages as canvas-readable media.
 
-Recommended gateway plan:
+Implemented gateway MVP:
 
-- RTSP -> MJPG for the fastest MVP path.
-- RTSP -> HLS for lower bandwidth and simpler browser video playback.
-- YouTube -> HLS/MJPG through `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
+- `stream-gateway` Docker service runs on `${STREAM_GATEWAY_PORT:-3001}`.
+- RTSP and YouTube modes call the gateway API and receive a browser-readable stream URL.
+- The default gateway output is MJPG because it plugs into the existing image-frame YOLO path.
+- YouTube support uses `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
+- HLS output is available at the gateway API level for later frontend/player work.
 - Later: RTSP -> WebRTC for lower-latency robot closed-loop control.
 
-The future `stream-gateway` service should run next to the Next.js app in Docker Compose and expose browser-compatible URLs such as:
+The gateway runs next to the Next.js app in Docker Compose and exposes browser-compatible URLs such as:
 
 ```text
 http://localhost:3001/streams/robot-front.mjpg

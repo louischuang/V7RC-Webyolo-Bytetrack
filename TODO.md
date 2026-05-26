@@ -30,29 +30,29 @@
 
 ## Phase 2.5 - Stream Sources
 
-- [ ] Add source selector for Camera, MJPG, RTSP, and YouTube.
-- [ ] Keep Camera mode on `getUserMedia()`.
-- [ ] Add MJPG URL input and raw `<img>` stream surface.
-- [ ] Add RTSP URL input and document that native `rtsp://` requires gateway conversion for Chrome.
-- [ ] Add YouTube URL input and document that watch URLs require gateway conversion for Chrome/canvas access.
-- [ ] Route camera, video URL, and MJPG image sources through the same YOLO/ByteTrack pipeline.
-- [ ] Capture the active source frame for Gemma multimodal prompts.
-- [ ] Add source-specific startup and error messages.
+- [x] Add source selector for Camera, MJPG, RTSP, and YouTube.
+- [x] Keep Camera mode on `getUserMedia()`.
+- [x] Add MJPG URL input and raw `<img>` stream surface.
+- [x] Add RTSP URL input and document that native `rtsp://` requires gateway conversion for Chrome.
+- [x] Add YouTube URL input and document that watch URLs require gateway conversion for Chrome/canvas access.
+- [x] Route camera, video URL, and MJPG image sources through the same YOLO/ByteTrack pipeline.
+- [x] Capture the active source frame for Gemma multimodal prompts.
+- [x] Add source-specific startup and error messages.
 - [ ] Validate CORS behavior for MJPG/HLS streams because canvas capture requires readable media.
 - [ ] Add tests or manual validation notes for camera, MJPG, HLS URL, RTSP gateway URL, and YouTube gateway URL.
 
 ## Phase 2.6 - Stream Gateway MVP
 
-- [ ] Add `stream-gateway` service to Docker Compose.
-- [ ] Choose first gateway backend: ffmpeg, GStreamer, or MediaMTX.
-- [ ] Define gateway API contract for creating/stopping streams.
-- [ ] Add RTSP input support.
-- [ ] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
-- [ ] Output MJPG endpoint for fastest YOLO/canvas integration.
-- [ ] Output HLS endpoint for lower bandwidth and better browser compatibility.
+- [x] Add `stream-gateway` service to Docker Compose.
+- [x] Choose first gateway backend: ffmpeg, GStreamer, or MediaMTX.
+- [x] Define gateway API contract for creating/stopping streams.
+- [x] Add RTSP input support.
+- [x] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
+- [x] Output MJPG endpoint for fastest YOLO/canvas integration.
+- [x] Output HLS endpoint for lower bandwidth and better browser compatibility.
 - [ ] Store temporary HLS segments outside the app image.
-- [ ] Add stream lifecycle cleanup for stopped or stale sessions.
-- [ ] Add healthcheck endpoint for the gateway.
+- [x] Add stream lifecycle cleanup for stopped or stale sessions.
+- [x] Add healthcheck endpoint for the gateway.
 - [ ] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
 - [ ] Document that WebRTC is the later low-latency path for robot closed-loop control.
 - [ ] Benchmark RTSP->MJPG latency and CPU load.

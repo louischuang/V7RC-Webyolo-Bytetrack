@@ -7,6 +7,14 @@ import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo"
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
 type SourceMode = "camera" | "mjpg" | "rtsp" | "youtube";
+type SourceSurface = "video" | "image";
+
+type GatewayStreamResponse = {
+  id: string;
+  output: "mjpg" | "hls";
+  status: string;
+  url: string;
+};
 
 type RuntimeStatus = {
   label: string;
@@ -41,6 +49,7 @@ const runtimeDefaults = {
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
   llmRuntime: defaultLlmRuntime,
+  streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3001",
 };
 
 const legacyDefaultSystemPrompt =
@@ -83,6 +92,7 @@ export default function Home() {
   const detectLoopRef = useRef<number | null>(null);
   const detectionFrameRef = useRef(0);
   const detectingRef = useRef(false);
+  const gatewayStreamIdRef = useRef<string | null>(null);
   const inferenceLoopRef = useRef(false);
   const inferenceRunningRef = useRef(false);
   const inferenceRoundRef = useRef(0);
@@ -92,6 +102,7 @@ export default function Home() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [sourceMode, setSourceMode] = useState<SourceMode>("camera");
+  const [sourceSurface, setSourceSurface] = useState<SourceSurface>("video");
   const [streamUrls, setStreamUrls] = useState<Record<Exclude<SourceMode, "camera">, string>>({
     mjpg: "",
     rtsp: "",
@@ -219,6 +230,10 @@ export default function Home() {
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
 
   const stopCamera = useCallback(() => {
+    if (gatewayStreamIdRef.current) {
+      void stopGatewayStream(gatewayStreamIdRef.current);
+      gatewayStreamIdRef.current = null;
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -230,6 +245,7 @@ export default function Home() {
     if (imageRef.current) {
       imageRef.current.removeAttribute("src");
     }
+    setSourceSurface("video");
     setCameraState((state) => (state === "error" ? "error" : "ready"));
     trackerRef.current.reset();
     setTracks([]);
@@ -261,18 +277,33 @@ export default function Home() {
 
         imageRef.current.crossOrigin = "anonymous";
         imageRef.current.src = url;
+        setSourceSurface("image");
         setCameraState("streaming");
         return;
       }
 
-      if (!videoRef.current) {
-        throw new Error("Video surface is not ready.");
+      if (sourceMode === "rtsp" || sourceMode === "youtube") {
+        const gatewayStream = await createGatewayStream(sourceMode, url);
+        gatewayStreamIdRef.current = gatewayStream.id;
+        if (gatewayStream.output === "mjpg") {
+          if (!imageRef.current) {
+            throw new Error("Gateway image surface is not ready.");
+          }
+          imageRef.current.crossOrigin = "anonymous";
+          imageRef.current.src = gatewayStream.url;
+          setSourceSurface("image");
+          setCameraState("streaming");
+          return;
+        }
+
+        await startVideoUrl(gatewayStream.url, videoRef.current);
+        setSourceSurface("video");
+        setCameraState("streaming");
+        return;
       }
 
-      videoRef.current.crossOrigin = "anonymous";
-      videoRef.current.src = url;
-      videoRef.current.muted = true;
-      await videoRef.current.play();
+      await startVideoUrl(url, videoRef.current);
+      setSourceSurface("video");
       setCameraState("streaming");
     } catch (error) {
       const message = error instanceof Error ? error.message : `Could not start ${sourceMode.toUpperCase()} stream.`;
@@ -320,6 +351,7 @@ export default function Home() {
       }
 
       await refreshDevices();
+      setSourceSurface("video");
       setCameraState("streaming");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown camera error.";
@@ -469,7 +501,9 @@ export default function Home() {
 
     const prompt = fixedPrompt.trim() || defaultFixedPrompt;
     const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
-    const imageDataUrl = includeFrame ? captureSourceFrame(getActiveSource(sourceMode, videoRef.current, imageRef.current)) : undefined;
+    const imageDataUrl = includeFrame
+      ? captureSourceFrame(getActiveSource(sourceSurface, videoRef.current, imageRef.current))
+      : undefined;
     const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, true);
     const nextMessages: BrowserLlmMessage[] = [
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
@@ -513,7 +547,7 @@ export default function Home() {
         }, 100);
       }
     }
-  }, [fixedPrompt, includeFrame, sourceMode, systemPrompt]);
+  }, [fixedPrompt, includeFrame, sourceSurface, systemPrompt]);
 
   useEffect(() => {
     runInferenceRoundRef.current = runInferenceRound;
@@ -572,7 +606,7 @@ export default function Home() {
 
   useEffect(() => {
     const detect = async () => {
-      const source = getActiveSource(sourceMode, videoRef.current, imageRef.current);
+      const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
       const detector = detectorRef.current;
 
       if (
@@ -620,7 +654,7 @@ export default function Home() {
         window.cancelAnimationFrame(detectLoopRef.current);
       }
     };
-  }, [cameraState, sourceMode]);
+  }, [cameraState, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -628,7 +662,7 @@ export default function Home() {
     let frameCount = 0;
 
     const paint = () => {
-      const source = getActiveSource(sourceMode, videoRef.current, imageRef.current);
+      const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
       const canvas = canvasRef.current;
       const context = canvas?.getContext("2d");
 
@@ -663,7 +697,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, [mirrorPreview, sourceMode]);
+  }, [mirrorPreview, sourceMode, sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -766,7 +800,7 @@ export default function Home() {
         <div className="camera-panel">
           <div className="video-stage">
             <video
-              className={sourceMode === "mjpg" ? "hidden-source" : sourceMode === "camera" && mirrorPreview ? "mirrored" : undefined}
+              className={sourceSurface === "image" ? "hidden-source" : sourceMode === "camera" && mirrorPreview ? "mirrored" : undefined}
               ref={videoRef}
               muted
               playsInline
@@ -774,11 +808,11 @@ export default function Home() {
             {/* eslint-disable-next-line @next/next/no-img-element -- MJPG streams need a raw img surface. */}
             <img
               alt=""
-              className={sourceMode === "mjpg" ? undefined : "hidden-source"}
+              className={sourceSurface === "image" ? undefined : "hidden-source"}
               ref={imageRef}
               onError={() => {
-                if (sourceMode === "mjpg") {
-                  setCameraError("Could not load MJPG stream.");
+                if (sourceSurface === "image") {
+                  setCameraError("Could not load image stream.");
                   setCameraState("error");
                 }
               }}
@@ -981,11 +1015,11 @@ function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstr
 }
 
 function getActiveSource(
-  sourceMode: SourceMode,
+  sourceSurface: SourceSurface,
   video: HTMLVideoElement | null,
   image: HTMLImageElement | null,
 ): DetectableSource | null {
-  return sourceMode === "mjpg" ? image : video;
+  return sourceSurface === "image" ? image : video;
 }
 
 function isSourceReady(source: DetectableSource) {
@@ -1016,7 +1050,50 @@ function getSourcePlaceholder(sourceMode: Exclude<SourceMode, "camera">) {
     return "https://host/stream.m3u8 or converted RTSP stream URL";
   }
 
-  return "https://host/youtube-proxy/stream.m3u8";
+  return "https://www.youtube.com/watch?v=...";
+}
+
+async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string): Promise<GatewayStreamResponse> {
+  const response = await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/api/streams`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      sourceType: sourceMode,
+      url,
+      output: "mjpg",
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as Partial<GatewayStreamResponse> & { error?: string } | null;
+  if (!response.ok || !payload?.url || !payload.id) {
+    throw new Error(payload?.error || `Stream gateway returned ${response.status}.`);
+  }
+
+  return {
+    id: payload.id,
+    output: payload.output === "hls" ? "hls" : "mjpg",
+    status: payload.status || "ready",
+    url: payload.url,
+  };
+}
+
+async function stopGatewayStream(id: string) {
+  await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/api/streams/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  }).catch(() => undefined);
+}
+
+async function startVideoUrl(url: string, video: HTMLVideoElement | null) {
+  if (!video) {
+    throw new Error("Video surface is not ready.");
+  }
+
+  video.crossOrigin = "anonymous";
+  video.src = url;
+  video.muted = true;
+  await video.play();
 }
 
 function captureSourceFrame(source: DetectableSource | null) {
