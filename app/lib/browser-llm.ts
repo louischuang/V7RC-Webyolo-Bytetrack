@@ -6,6 +6,7 @@ export type BrowserLlmMessage = {
 };
 
 export type BrowserLlmConfig = {
+  runtime: "webllm" | "transformers";
   modelId: string;
   modelUrl: string;
   modelLibUrl: string;
@@ -21,6 +22,11 @@ export type BrowserLlmGeneration = {
 type WebLlmModule = typeof import("@mlc-ai/web-llm");
 type MlcEngine = Awaited<ReturnType<WebLlmModule["CreateMLCEngine"]>>;
 type AppConfig = import("@mlc-ai/web-llm").AppConfig;
+type WorkerResponse =
+  | { id: number; type: "progress"; progress: LoadProgress }
+  | { id: number; type: "loaded" }
+  | { id: number; type: "generated"; result: BrowserLlmGeneration }
+  | { id: number; type: "error"; error: string };
 type ChatChunk = {
   choices?: Array<{
     delta?: {
@@ -84,10 +90,25 @@ export async function getWebGpuStatus() {
 
 export class BrowserLlm {
   private engine: MlcEngine | null = null;
+  private worker: Worker | null = null;
+  private workerRequestId = 0;
+  private workerRequests = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (reason?: unknown) => void;
+      onProgress?: (progress: LoadProgress) => void;
+    }
+  >();
 
   constructor(private readonly config: BrowserLlmConfig) {}
 
   async load(onProgress: (progress: LoadProgress) => void) {
+    if (this.config.runtime === "transformers") {
+      await this.loadTransformers(onProgress);
+      return;
+    }
+
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
     const modelUrl = toAbsoluteUrl(this.config.modelUrl);
     const modelLibUrl = toAbsoluteUrl(this.config.modelLibUrl);
@@ -119,6 +140,10 @@ export class BrowserLlm {
   }
 
   async generate(messages: BrowserLlmMessage[]) {
+    if (this.config.runtime === "transformers") {
+      return this.generateWithTransformers(messages);
+    }
+
     if (!this.engine) {
       throw new Error("Gemma model is not loaded.");
     }
@@ -205,6 +230,30 @@ export class BrowserLlm {
     return { text: chooseBestCandidate(candidates), diagnostics };
   }
 
+  private async loadTransformers(onProgress: (progress: LoadProgress) => void) {
+    const modelId = this.config.modelUrl || this.config.modelId;
+    this.ensureWorker();
+    await this.postWorkerRequest(
+      {
+        type: "load",
+        modelId,
+        maxNewTokens: this.config.maxNewTokens,
+        temperature: this.config.temperature,
+      },
+      onProgress,
+    );
+  }
+
+  private async generateWithTransformers(messages: BrowserLlmMessage[]): Promise<BrowserLlmGeneration> {
+    this.ensureWorker();
+    return (await this.postWorkerRequest({
+      type: "generate",
+      messages,
+      maxNewTokens: this.config.maxNewTokens,
+      temperature: this.config.temperature,
+    })) as BrowserLlmGeneration;
+  }
+
   private async generateFromChatStream(messages: BrowserLlmMessage[], diagnostics: string[]) {
     if (!this.engine) {
       throw new Error("Gemma model is not loaded.");
@@ -281,6 +330,56 @@ export class BrowserLlm {
     );
     return cleaned;
   }
+
+  private handleWorkerMessage(event: MessageEvent<WorkerResponse>) {
+    const request = this.workerRequests.get(event.data.id);
+    if (!request) {
+      return;
+    }
+
+    if (event.data.type === "progress") {
+      request.onProgress?.(event.data.progress);
+      return;
+    }
+
+    this.workerRequests.delete(event.data.id);
+    if (event.data.type === "error") {
+      request.reject(new Error(event.data.error));
+      return;
+    }
+
+    if (event.data.type === "generated") {
+      request.resolve(event.data.result);
+      return;
+    }
+
+    request.resolve(undefined);
+  }
+
+  private ensureWorker() {
+    if (this.worker) {
+      return;
+    }
+
+    this.worker = new Worker(new URL("./transformers-gemma-worker.ts", import.meta.url), { type: "module" });
+    this.worker.onmessage = this.handleWorkerMessage.bind(this);
+    this.worker.onerror = (event: ErrorEvent) => {
+      for (const request of this.workerRequests.values()) {
+        request.reject(new Error(event.message || "Transformers.js worker failed."));
+      }
+      this.workerRequests.clear();
+    };
+  }
+
+  private postWorkerRequest(payload: Record<string, unknown>, onProgress?: (progress: LoadProgress) => void) {
+    this.ensureWorker();
+    const id = ++this.workerRequestId;
+
+    return new Promise((resolve, reject) => {
+      this.workerRequests.set(id, { resolve, reject, onProgress });
+      this.worker?.postMessage({ id, ...payload });
+    });
+  }
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
@@ -318,6 +417,24 @@ function cleanupGemmaResponse(response: string) {
     .replace(/<\|channel>thought[\s\S]*?<channel\|>/gu, "")
     .replace(/<eos>/gu, "")
     .trim();
+}
+
+function decodeTransformersOutput(processor: any, outputs: any, inputs: any) {
+  try {
+    const inputLength = inputs.input_ids?.dims?.at?.(-1);
+    if (typeof inputLength === "number" && typeof outputs?.slice === "function") {
+      const generated = outputs.slice(null, [inputLength, null]);
+      return processor.batch_decode(generated, { skip_special_tokens: true })?.[0] ?? "";
+    }
+  } catch {
+    // Fall back to streamed text below.
+  }
+
+  try {
+    return processor.batch_decode(outputs, { skip_special_tokens: true })?.[0] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function isUsableCandidate(response: string) {

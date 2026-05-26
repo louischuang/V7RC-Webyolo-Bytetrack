@@ -10,7 +10,7 @@ Use this layout for local development:
 public/models/
   yolo/
     yolo11n.onnx
-  gemma4-e2b-it/
+  gemma4-e2b-it-onnx/
     ...
 ```
 
@@ -20,7 +20,7 @@ Use this layout for production host storage:
 models/
   yolo/
     yolo11n.onnx
-  gemma4-e2b-it/
+  gemma4-e2b-it-onnx/
     ...
 ```
 
@@ -87,37 +87,37 @@ models/yolo/yolo11n.onnx
 MVP chat design:
 
 - Source model ID: `google/gemma-4-E2B-it`
-- Source model ID: `google/gemma-4-E2B-it`
 - Execution target: browser, not a server API
-- Runtime: WebLLM / MLC WebGPU
-- Current artifact: `welcoma/gemma-4-E2B-it-q4f16_1-MLC`
-- Current scope: text generation path validated by the artifact publisher
+- Runtime: Transformers.js / ONNX WebGPU
+- Current artifact: `onnx-community/gemma-4-E2B-it-ONNX`
+- Current scope: text generation with YOLO/ByteTrack track summaries
 
 Default config:
 
 ```env
-NEXT_PUBLIC_LLM_RUNTIME=webllm
-NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
-NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+NEXT_PUBLIC_LLM_RUNTIME=transformers
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
 NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=512
-NEXT_PUBLIC_LLM_TEMPERATURE=0.7
+NEXT_PUBLIC_LLM_TEMPERATURE=0.2
 ```
 
 Important deployment note:
 
 The raw Hugging Face safetensors checkpoint is the source model, not necessarily the final browser artifact. For browser deployment, prefer a runtime-specific package such as an MLC/WebLLM or Transformers.js-compatible quantized artifact.
 
-The first integrated runtime uses the public WebLLM package documented by MLC and the community MLC artifact `welcoma/gemma-4-E2B-it-q4f16_1-MLC`. First load downloads model shards into the browser cache. For offline production, mirror the artifact under:
+The current integrated runtime uses Transformers.js with the ONNX community artifact `onnx-community/gemma-4-E2B-it-ONNX`. The model loads in a Web Worker so the camera, YOLO overlay, and UI remain responsive while the browser downloads or initializes model files.
+
+First load downloads model shards into browser-managed cache storage. For offline production, mirror the q4f16 ONNX artifact under:
 
 ```text
-models/gemma4-e2b-it/
+models/gemma4-e2b-it-onnx/
 ```
 
 Then mount `./models` into the container so the app can serve it at:
 
 ```text
-/models/gemma4-e2b-it
+/models/gemma4-e2b-it-onnx
 ```
 
 The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. Raw image-frame multimodal input is intentionally left for the next milestone because the current WebLLM artifact documents a validated text path.
@@ -125,34 +125,34 @@ The current chat implementation sends text plus an optional summary of active YO
 Download helper:
 
 ```bash
-bash scripts/prepare-gemma4-e2b-webllm.sh
+bash scripts/prepare-gemma4-e2b-onnx.sh
 ```
 
-The helper downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` with `huggingface_hub` into `models/gemma4-e2b-it/` and creates a local development symlink at `public/models/gemma4-e2b-it`.
+The helper downloads `onnx-community/gemma-4-E2B-it-ONNX` q4f16 files with `huggingface_hub` into `models/gemma4-e2b-it-onnx/` and creates a local development symlink at `public/models/gemma4-e2b-it-onnx`.
 
-WebLLM expects Hugging Face style URLs such as `/resolve/main/mlc-chat-config.json`, so the helper also creates:
+### Optional WebLLM Artifact
 
-```text
-models/gemma4-e2b-it/resolve/main -> models/gemma4-e2b-it
+The MLC/WebLLM artifact `welcoma/gemma-4-E2B-it-q4f16_1-MLC` is still supported behind `NEXT_PUBLIC_LLM_RUNTIME=webllm`, but testing in Chrome showed repeated control-token-only responses with WebLLM `0.2.83`. Keep it as an experiment path, not the default.
+
+Prepare it with:
+
+```bash
+bash scripts/prepare-gemma4-e2b-webllm.sh
 ```
 
 ### Browser Cache Storage
 
 Do not use JavaScript `localStorage` for Gemma model files. `localStorage` is too small and string-only, so it is suitable for settings but not model weights.
 
-WebLLM should cache model artifacts in browser storage, typically IndexedDB and related browser-managed cache storage. The current adapter enables:
-
-```ts
-useIndexedDBCache: true
-```
+Transformers.js and WebLLM should cache model artifacts in browser storage, typically Cache API, IndexedDB, and related browser-managed storage.
 
 Practical behavior:
 
-- First `Load Gemma` downloads model shards and the WebGPU WASM library.
+- First `Load Gemma` downloads model shards and initializes WebGPU sessions.
 - Chrome stores those artifacts under this site's browser data.
 - Later loads should reuse the local browser cache instead of re-downloading everything.
 - Clearing site data, using a different browser profile, or changing host/origin can remove or bypass that cache.
-- For production, keep a host-side copy under `models/gemma4-e2b-it/` as the deployable source, then let each browser cache it locally after first use.
+- For production, keep a host-side copy under `models/gemma4-e2b-it-onnx/` as the deployable source, then let each browser cache it locally after first use.
 
 ## Docker Deployment
 
@@ -164,7 +164,7 @@ project/
   models/
     yolo/
       yolo11n.onnx
-    gemma4-e2b-it/
+    gemma4-e2b-it-onnx/
       ...
 ```
 
@@ -205,7 +205,7 @@ Check model availability:
 
 ```bash
 curl -I http://localhost:3000/models/yolo/yolo11n.onnx
-curl -I http://localhost:3000/models/gemma4-e2b-it/
+curl -I http://localhost:3000/models/gemma4-e2b-it-onnx/config.json
 ```
 
 Expected YOLO response:

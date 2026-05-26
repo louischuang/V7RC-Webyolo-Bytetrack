@@ -19,13 +19,13 @@ Large model artifacts should live outside the Docker image. The app serves model
 public/models/              # local development path
   yolo/
     yolo11n.onnx
-  gemma4-e2b-it/
+  gemma4-e2b-it-onnx/
     ...
 
 models/                     # production host-mounted path
   yolo/
     yolo11n.onnx
-  gemma4-e2b-it/
+  gemma4-e2b-it-onnx/
     ...
 ```
 
@@ -33,10 +33,9 @@ Default browser model URLs:
 
 ```env
 NEXT_PUBLIC_YOLO_MODEL_URL=/models/yolo/yolo11n.onnx
-NEXT_PUBLIC_LLM_RUNTIME=webllm
-NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
-NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+NEXT_PUBLIC_LLM_RUNTIME=transformers
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
 ```
 
 More details: [docs/models.md](docs/models.md).
@@ -61,32 +60,45 @@ Generated files are intentionally ignored by git:
 .model-export/
 public/models/**/*.onnx
 public/models/gemma4-e2b-it
+public/models/gemma4-e2b-it-onnx
 models/
 ```
 
-## Prepare Gemma4-E2B WebLLM
+## Prepare Gemma4-E2B ONNX
 
 Download the browser-ready Gemma4-E2B artifact to the host-side model volume:
 
 ```bash
-bash scripts/prepare-gemma4-e2b-webllm.sh
+bash scripts/prepare-gemma4-e2b-onnx.sh
 ```
 
-This downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` to:
+This downloads the Transformers.js-compatible ONNX q4f16 files from `onnx-community/gemma-4-E2B-it-ONNX` to:
 
 ```text
-models/gemma4-e2b-it/
-```
-
-It also creates a Hugging Face compatible local path because WebLLM expects `/resolve/main/...` under model URLs:
-
-```text
-models/gemma4-e2b-it/resolve/main -> models/gemma4-e2b-it
+models/gemma4-e2b-it-onnx/
 ```
 
 Docker Compose mounts `./models` into `/app/public/models`, so production can serve:
 
 ```env
+NEXT_PUBLIC_LLM_RUNTIME=transformers
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
+```
+
+## Optional Gemma4-E2B WebLLM
+
+The earlier MLC/WebLLM artifact remains available for comparison:
+
+```bash
+bash scripts/prepare-gemma4-e2b-webllm.sh
+```
+
+Use it only when explicitly selecting the WebLLM runtime:
+
+```env
+NEXT_PUBLIC_LLM_RUNTIME=webllm
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
 NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
@@ -103,4 +115,4 @@ Chrome camera access works on `localhost`. For production hosts, serve over HTTP
 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
-- Gemma4-E2B runs through browser-local WebLLM/WebGPU text generation. Current frame context is summarized from active tracks; raw image multimodal input is the next milestone.
+- Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU text generation in a Web Worker. Current frame context is summarized from active tracks; raw image multimodal input is the next milestone.

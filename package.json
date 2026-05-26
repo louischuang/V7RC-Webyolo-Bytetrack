@@ -10,6 +10,7 @@
     "typecheck": "next build --experimental-build-mode compile"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@mlc-ai/web-llm": "^0.2.83",
     "next": "^16.2.6",
     "onnxruntime-web": "^1.22.0",

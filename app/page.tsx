@@ -20,20 +20,26 @@ type TrackRow = {
   ageMs: number;
 };
 
+const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
+const defaultLlmModelId =
+  defaultLlmRuntime === "transformers" ? "onnx-community/gemma-4-E2B-it-ONNX" : "gemma-4-E2B-it-q4f16_1-MLC";
+
 const runtimeDefaults = {
   yoloModelUrl: process.env.NEXT_PUBLIC_YOLO_MODEL_URL ?? "/models/yolo/yolo11n.onnx",
   yoloInputSize: Number(process.env.NEXT_PUBLIC_YOLO_INPUT_SIZE ?? 640),
   yoloConfidenceThreshold: Number(process.env.NEXT_PUBLIC_YOLO_CONF_THRESHOLD ?? 0.25),
   yoloIouThreshold: Number(process.env.NEXT_PUBLIC_YOLO_IOU_THRESHOLD ?? 0.45),
   yoloFrameInterval: Number(process.env.NEXT_PUBLIC_YOLO_FRAME_INTERVAL ?? 3),
-  llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? "gemma-4-E2B-it-q4f16_1-MLC",
-  llmModelUrl: process.env.NEXT_PUBLIC_LLM_MODEL_URL ?? "/models/gemma4-e2b-it",
+  llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? defaultLlmModelId,
+  llmModelUrl:
+    process.env.NEXT_PUBLIC_LLM_MODEL_URL ??
+    (defaultLlmRuntime === "transformers" ? "onnx-community/gemma-4-E2B-it-ONNX" : "/models/gemma4-e2b-it"),
   llmModelLibUrl:
     process.env.NEXT_PUBLIC_LLM_MODEL_LIB_URL ??
     "/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
-  llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webllm",
+  llmRuntime: defaultLlmRuntime,
 };
 
 export default function Home() {
@@ -253,6 +259,7 @@ export default function Home() {
 
     try {
       const llm = new BrowserLlm({
+        runtime: runtimeDefaults.llmRuntime === "webllm" ? "webllm" : "transformers",
         modelId: runtimeDefaults.llmModelId,
         modelUrl: runtimeDefaults.llmModelUrl,
         modelLibUrl: runtimeDefaults.llmModelLibUrl,

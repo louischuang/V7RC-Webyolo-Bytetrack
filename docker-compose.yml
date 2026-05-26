@@ -7,10 +7,9 @@ services:
     environment:
       NEXT_PUBLIC_YOLO_MODEL_URL: /models/yolo/yolo11n.onnx
       NEXT_PUBLIC_YOLO_LABELS_URL: /models/yolo/coco.names
-      NEXT_PUBLIC_LLM_RUNTIME: webllm
-      NEXT_PUBLIC_LLM_MODEL_ID: gemma-4-E2B-it-q4f16_1-MLC
-      NEXT_PUBLIC_LLM_MODEL_URL: /models/gemma4-e2b-it
-      NEXT_PUBLIC_LLM_MODEL_LIB_URL: /models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+      NEXT_PUBLIC_LLM_RUNTIME: transformers
+      NEXT_PUBLIC_LLM_MODEL_ID: gemma-4-E2B-it-ONNX
+      NEXT_PUBLIC_LLM_MODEL_URL: /models/gemma4-e2b-it-onnx
     volumes:
       - ./models:/app/public/models:ro
     restart: unless-stopped
