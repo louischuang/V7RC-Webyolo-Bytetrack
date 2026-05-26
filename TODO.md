@@ -28,6 +28,37 @@
 - [ ] Confirm iPhone Continuity Camera appears as a selectable camera on macOS when configured.
 - [ ] Add clear errors for blocked permission, missing camera, or insecure origin.
 
+## Phase 2.5 - Stream Sources
+
+- [ ] Add source selector for Camera, MJPG, RTSP, and YouTube.
+- [ ] Keep Camera mode on `getUserMedia()`.
+- [ ] Add MJPG URL input and raw `<img>` stream surface.
+- [ ] Add RTSP URL input and document that native `rtsp://` requires gateway conversion for Chrome.
+- [ ] Add YouTube URL input and document that watch URLs require gateway conversion for Chrome/canvas access.
+- [ ] Route camera, video URL, and MJPG image sources through the same YOLO/ByteTrack pipeline.
+- [ ] Capture the active source frame for Gemma multimodal prompts.
+- [ ] Add source-specific startup and error messages.
+- [ ] Validate CORS behavior for MJPG/HLS streams because canvas capture requires readable media.
+- [ ] Add tests or manual validation notes for camera, MJPG, HLS URL, RTSP gateway URL, and YouTube gateway URL.
+
+## Phase 2.6 - Stream Gateway MVP
+
+- [ ] Add `stream-gateway` service to Docker Compose.
+- [ ] Choose first gateway backend: ffmpeg, GStreamer, or MediaMTX.
+- [ ] Define gateway API contract for creating/stopping streams.
+- [ ] Add RTSP input support.
+- [ ] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
+- [ ] Output MJPG endpoint for fastest YOLO/canvas integration.
+- [ ] Output HLS endpoint for lower bandwidth and better browser compatibility.
+- [ ] Store temporary HLS segments outside the app image.
+- [ ] Add stream lifecycle cleanup for stopped or stale sessions.
+- [ ] Add healthcheck endpoint for the gateway.
+- [ ] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
+- [ ] Document that WebRTC is the later low-latency path for robot closed-loop control.
+- [ ] Benchmark RTSP->MJPG latency and CPU load.
+- [ ] Benchmark RTSP->HLS latency and CPU load.
+- [ ] Decide whether the first production robot target should use MJPG, HLS, or WebRTC.
+
 ## Phase 3 - Video Overlay
 
 - [ ] Add video element and overlay canvas.
@@ -111,9 +142,16 @@
 - [ ] Build Next.js standalone output.
 - [ ] Create production Docker image.
 - [ ] Create Docker Compose production example.
+- [ ] Add optional stream-gateway container to Docker Compose.
+- [ ] Add gateway environment variables for allowed inputs, output mode, and segment directory.
 - [ ] Add healthcheck endpoint.
+- [ ] Add stream-gateway healthcheck.
 - [ ] Verify app starts in container.
+- [ ] Verify gateway starts in container.
 - [ ] Verify camera works from Chrome against container-hosted app.
+- [ ] Verify MJPG source works against container-hosted app.
+- [ ] Verify RTSP gateway source works against container-hosted app.
+- [ ] Verify YouTube gateway source works against container-hosted app when policy allows.
 - [ ] Verify Gemma4-E2B runs in Chrome against container-hosted static model artifacts.
 
 ## Phase 10 - Validation
@@ -124,6 +162,9 @@
 - [ ] Test in Chrome on localhost.
 - [ ] Test with built-in Mac camera.
 - [ ] Test with iPhone Continuity Camera if available.
+- [ ] Test with direct MJPG URL.
+- [ ] Test with gateway-converted RTSP URL.
+- [ ] Test with gateway-converted YouTube URL.
 - [ ] Test with detection enabled for at least 10 minutes.
 - [ ] Check memory growth during long-running detection.
 - [ ] Confirm no remote network calls are required for inference after models are installed.
@@ -144,3 +185,6 @@
 - [ ] Add persistent chat/session history.
 - [ ] Add benchmark page for different YOLO models and runtimes.
 - [ ] Add benchmark page for Gemma4-E2B browser artifacts and quantization levels.
+- [ ] Add WebRTC stream gateway mode for lower-latency robot control.
+- [ ] Add authenticated stream source support.
+- [ ] Add per-source presets for robot camera endpoints.

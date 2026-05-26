@@ -2,7 +2,7 @@
 
 ## MVP Goal
 
-Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam, performs YOLO object detection in the browser, tracks objects with ByteTrack, overlays bounding boxes and IDs on the video, lists tracked objects, and runs Gemma4-E2B chat directly inside the web page without a server-side LLM API.
+Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam or browser-compatible stream source, performs YOLO object detection in the browser, tracks objects with ByteTrack, overlays bounding boxes and IDs on the video, lists tracked objects, and runs Gemma4-E2B chat directly inside the web page without a server-side LLM API.
 
 ## MVP Scope
 
@@ -10,8 +10,11 @@ Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam, pe
 
 - Next.js TypeScript app.
 - Chrome-first webcam access.
+- Source selection for Camera, MJPG, RTSP, and YouTube.
 - Camera selection from browser-exposed devices.
 - macOS iPhone Continuity Camera support when Chrome lists the iPhone as a `videoinput`.
+- Direct browser playback for camera, MJPG, and browser-compatible video URLs.
+- Stream gateway plan for RTSP and YouTube URLs that Chrome cannot play directly.
 - Live video display.
 - Canvas overlay for object bounding boxes, class labels, confidence, and ByteTrack ID.
 - Browser-side YOLO ONNX inference.
@@ -23,6 +26,7 @@ Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam, pe
 - Browser-side model download, progress display, and cache-aware loading.
 - Docker production build.
 - Host-mounted model/data volumes.
+- Optional stream-gateway container for RTSP/YouTube conversion.
 - Setup scripts or documentation for downloading local model assets outside the container.
 
 ### Out of Scope for MVP
@@ -43,8 +47,9 @@ Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam, pe
 
 ```text
 Chrome
+  ├─ Source selection: Camera / MJPG / RTSP / YouTube
   ├─ Camera capture: getUserMedia()
-  ├─ Video element
+  ├─ Browser-compatible streams: video or MJPG image surface
   ├─ Canvas overlay
   ├─ YOLO ONNX inference: ONNX Runtime Web
   ├─ ByteTrack tracker: TypeScript
@@ -58,9 +63,40 @@ Next.js server
   ├─ YOLO model artifact serving
   └─ optional Gemma4 browser artifact serving
 
+Stream gateway
+  ├─ RTSP input
+  ├─ YouTube/watch URL input
+  ├─ ffmpeg/GStreamer/MediaMTX conversion
+  └─ Browser-compatible output: MJPG, HLS, MP4 fragment, or WebRTC
+
 Host storage
   └─ Optional mounted model artifacts outside the Docker image
 ```
+
+## Stream Source Strategy
+
+Chrome can read camera devices through `getUserMedia()`, MJPG streams through a raw image surface, and common browser video formats through a `<video>` element. Chrome cannot directly play native `rtsp://` URLs or YouTube watch pages as canvas-readable video sources.
+
+MVP behavior:
+
+- `Camera`: use `getUserMedia()` and the selected Chrome `videoinput`.
+- `MJPG`: accept a direct MJPG URL and render it through an `<img>` stream surface.
+- `RTSP`: accept a URL field, but production usage should point to a gateway-converted browser URL such as HLS, MJPG, or WebRTC.
+- `YouTube`: accept a URL field, but production usage should point to a gateway-converted browser URL, not a regular watch page.
+
+Recommended stream-gateway MVP:
+
+- Add a `stream-gateway` Docker service next to `web`.
+- Use ffmpeg or MediaMTX first because they are proven and simple to deploy.
+- Convert RTSP to MJPG for fastest integration or HLS for lower bandwidth.
+- Convert YouTube through `yt-dlp` plus ffmpeg into HLS/MJPG when allowed by the source and deployment policy.
+- Expose generated streams under stable local URLs such as `/streams/{id}.mjpg` or `/streams/{id}/index.m3u8`.
+- Keep YOLO, ByteTrack, and Gemma inference in Chrome; the gateway only normalizes video transport.
+
+Long-term low-latency option:
+
+- RTSP to WebRTC is the best fit for robot closed-loop control when latency matters.
+- WebRTC requires signaling, ICE/TURN planning, lifecycle cleanup, and browser autoplay/error handling, so it is a later milestone after MJPG/HLS gateway validation.
 
 ## Runtime Model Strategy
 
@@ -168,7 +204,9 @@ Use a multi-stage Dockerfile:
 Use Docker Compose for local production-like deployment:
 
 - `web`: Next.js app.
+- `stream-gateway`: optional RTSP/YouTube to browser stream converter.
 - Named or bind-mounted volume for model weights.
+- Optional bind-mounted volume for gateway temporary HLS segments.
 
 Do not bake large YOLO or LLM model files into the image.
 
@@ -179,8 +217,9 @@ Do not bake large YOLO or LLM model files into the image.
 Must show:
 
 - App name.
-- Camera selector.
-- Start/stop camera.
+- Source selector: Camera, MJPG, RTSP, YouTube.
+- Source-specific controls: camera selector or stream URL input.
+- Start/stop active source.
 - Detection enabled toggle.
 - Tracking enabled toggle.
 - Browser LLM status.
@@ -216,9 +255,10 @@ Sort by most recently updated track first.
 
 Features:
 
-- Text input.
-- Send button.
 - Include current frame option.
+- Fixed robot perception prompt.
+- Start/stop Gemma perception loop.
+- Response count and last inference time.
 - Loading state.
 - Model download progress.
 - Error state when WebGPU is unavailable, model artifacts are missing, or the browser runs out of memory.

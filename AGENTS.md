@@ -2,16 +2,18 @@
 
 ## Project Mission
 
-Build a local-first Chrome web application for real-time webcam object detection, object tracking, and multimodal chat.
+Build a local-first Chrome web application for real-time camera/stream object detection, object tracking, and multimodal chat.
 
-The MVP runs fully in Chrome for camera capture, YOLO inference, ByteTrack tracking, Gemma4-E2B inference, overlays, chat, and UI rendering. Next.js serves the app and static model artifacts only; it must not proxy chat to a server-side LLM API.
+The MVP runs fully in Chrome for camera or browser-compatible stream playback, YOLO inference, ByteTrack tracking, Gemma4-E2B inference, overlays, chat, and UI rendering. Next.js serves the app and static model artifacts only; it must not proxy chat to a server-side LLM API. An optional stream-gateway service may convert RTSP or YouTube sources into browser-compatible streams, but it must not run YOLO, ByteTrack, or LLM inference.
 
 ## Primary User Goals
 
 - Open the app in Chrome.
+- Select a source: Camera, MJPG, RTSP, or YouTube.
 - Select a webcam, including a Mac built-in camera or iPhone Continuity Camera when macOS exposes it as a camera device.
-- See the live camera stream.
-- Run YOLO object detection on camera frames.
+- Enter browser-compatible stream URLs or gateway-backed RTSP/YouTube URLs.
+- See the live camera or stream source.
+- Run YOLO object detection on active source frames.
 - Run ByteTrack to assign stable IDs to detected objects.
 - Draw bounding boxes, class labels, confidence, and track IDs over the live camera.
 - Show a live object list with object name, ID, and confidence.
@@ -32,6 +34,7 @@ The MVP runs fully in Chrome for camera capture, YOLO inference, ByteTrack track
 - Detector: Ultralytics YOLO11n detection model exported to ONNX for MVP; YOLO11s is the first quality upgrade if browser performance is acceptable.
 - Tracker: ByteTrack implemented in TypeScript and run in the browser main thread first; move to Web Worker if UI latency requires it.
 - Camera: Browser `navigator.mediaDevices.getUserMedia()` and `enumerateDevices()`.
+- Stream gateway: optional Docker service using ffmpeg, GStreamer, or MediaMTX to convert RTSP/YouTube into MJPG, HLS, or later WebRTC.
 - Overlay: HTML canvas layered over the video element.
 - Browser LLM runtime: WebGPU-first runtime such as Transformers.js, WebLLM, MLC WebLLM, or another proven browser inference library.
 - LLM artifact: `google/gemma-4-E2B-it` or a browser-ready quantized conversion derived from it.
@@ -53,6 +56,7 @@ Do not assume the raw Hugging Face safetensors checkpoint is the best browser ar
 ## Architecture Principles
 
 - Keep camera frames local. Do not upload video frames to remote services.
+- RTSP and YouTube gateway conversion is transport normalization only; keep inference in Chrome unless the user explicitly changes architecture.
 - Keep object detection and tracking in the browser whenever feasible.
 - Keep large LLM weights outside the Docker image unless the user explicitly chooses an offline bundled image.
 - Keep the Docker image reproducible and small.
@@ -77,8 +81,9 @@ The first usable screen should be the actual app, not a marketing landing page.
 Layout:
 
 1. Top menu/status bar.
-   - Start/stop camera.
-   - Camera selector.
+   - Source selector: Camera, MJPG, RTSP, YouTube.
+   - Start/stop active source.
+   - Camera selector or stream URL input depending on source.
    - Detector status.
    - Tracker status.
    - Browser LLM status.
@@ -89,10 +94,9 @@ Layout:
    - Left: live webcam video with canvas overlay.
    - Right: tracked object list with object name, track ID, and confidence.
 3. Bottom area.
-   - Chat transcript.
-   - Text input.
-   - Send button.
-   - Optional toggle or button to include current frame in the prompt.
+   - Gemma response transcript.
+   - Response count and last inference time.
+   - Prompt and include-current-frame settings live in the Gemma settings modal.
 
 ## Development Rules for Future Agents
 
@@ -109,7 +113,8 @@ Layout:
 - Docker build succeeds.
 - App runs in Chrome.
 - Camera selector lists available cameras.
-- Video stream renders.
+- Source selector switches Camera, MJPG, RTSP, and YouTube modes.
+- Camera or stream source renders.
 - YOLO inference runs on sampled frames.
 - ByteTrack assigns stable IDs across frames.
 - Bounding boxes and IDs draw correctly on top of the video.

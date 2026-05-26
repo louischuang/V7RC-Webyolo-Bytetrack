@@ -176,7 +176,7 @@ docker compose up --build
 
 Chrome downloads the model files from the web app and runs inference locally. Camera access works on `localhost`; production hostnames must use HTTPS for browser camera permissions.
 
-## Camera Sources
+## Camera and Stream Sources
 
 The camera selector lists Chrome `videoinput` devices. On macOS, iPhone camera support comes through Apple's Continuity Camera and appears as another video input after Chrome has camera permission.
 
@@ -186,6 +186,21 @@ Behavior:
 - If no camera is selected yet, the app prefers an iPhone/Continuity camera when one is available.
 - The `Refresh` camera button reruns device enumeration after plugging in, waking, or selecting the iPhone camera from macOS.
 - The `devicechange` browser event also refreshes the list automatically when macOS reports a camera change.
+
+The app also exposes source modes for MJPG, RTSP, and YouTube:
+
+- `MJPG` can point directly at an MJPG stream URL when CORS allows canvas reads.
+- `RTSP` should point to a stream-gateway output URL, not a native `rtsp://` URL.
+- `YouTube` should point to a stream-gateway output URL, not a regular YouTube watch page.
+
+Chrome playback limitations:
+
+- Native `rtsp://` is not supported by the browser video element.
+- YouTube watch pages are iframe/player pages, not canvas-readable media streams.
+- Cross-origin streams must allow canvas access if the app needs to capture frames for YOLO and Gemma.
+- HLS support in Chrome may require a JavaScript HLS player unless the target platform provides native support.
+
+The planned stream gateway is documented in [stream-gateway.md](stream-gateway.md).
 
 ## Tracking Runtime
 

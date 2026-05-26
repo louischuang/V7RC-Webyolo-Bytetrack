@@ -42,6 +42,26 @@ More details: [docs/models.md](docs/models.md).
 
 Gemma model downloads are cached by WebLLM in browser-managed storage such as IndexedDB, not JavaScript `localStorage`. Clearing Chrome site data will remove the browser-side cached model.
 
+## Video Sources and Stream Gateway
+
+The app can switch between `Camera`, `MJPG`, `RTSP`, and `YouTube` source modes. Camera uses Chrome `getUserMedia()`. MJPG can be read directly through a raw image stream surface. RTSP and YouTube usually need a stream gateway because Chrome cannot directly play native `rtsp://` URLs or YouTube watch pages as canvas-readable media.
+
+Recommended gateway plan:
+
+- RTSP -> MJPG for the fastest MVP path.
+- RTSP -> HLS for lower bandwidth and simpler browser video playback.
+- YouTube -> HLS/MJPG through `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
+- Later: RTSP -> WebRTC for lower-latency robot closed-loop control.
+
+The future `stream-gateway` service should run next to the Next.js app in Docker Compose and expose browser-compatible URLs such as:
+
+```text
+http://localhost:3001/streams/robot-front.mjpg
+http://localhost:3001/streams/robot-front/index.m3u8
+```
+
+More details: [docs/stream-gateway.md](docs/stream-gateway.md).
+
 ## Prepare YOLO11n
 
 The MVP expects `public/models/yolo/yolo11n.onnx` during local development.
@@ -120,5 +140,6 @@ On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
 - Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU generation in a Web Worker.
-- When `Include current frame` is enabled, the app captures the current webcam frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.
-- The bottom prompt area is split into a persistent robot system prompt, a fixed task prompt, and live chat input. This keeps the perception loop ready for later motor-control commands while the current MVP remains observation-only.
+- When `Include current frame` is enabled, the app captures the active source frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.
+- Gemma settings live behind the Gemma4-E2B settings button and are cached in browser `localStorage`.
+- The Gemma perception loop is controlled from the Gemma4-E2B card and keeps the current MVP observation-only.
