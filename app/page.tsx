@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Detection, YoloDetector } from "./lib/yolo";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
 
@@ -11,16 +12,18 @@ type RuntimeStatus = {
 };
 
 type TrackRow = {
-  id: number;
+  id: string;
   label: string;
   confidence: number;
   ageMs: number;
 };
 
-const emptyTracks: TrackRow[] = [];
-
 const runtimeDefaults = {
   yoloModelUrl: process.env.NEXT_PUBLIC_YOLO_MODEL_URL ?? "/models/yolo/yolo11n.onnx",
+  yoloInputSize: Number(process.env.NEXT_PUBLIC_YOLO_INPUT_SIZE ?? 640),
+  yoloConfidenceThreshold: Number(process.env.NEXT_PUBLIC_YOLO_CONF_THRESHOLD ?? 0.25),
+  yoloIouThreshold: Number(process.env.NEXT_PUBLIC_YOLO_IOU_THRESHOLD ?? 0.45),
+  yoloFrameInterval: Number(process.env.NEXT_PUBLIC_YOLO_FRAME_INTERVAL ?? 3),
   llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? "google/gemma-4-E2B-it",
   llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webgpu",
 };
@@ -29,13 +32,24 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<YoloDetector | null>(null);
+  const detectionsRef = useRef<Detection[]>([]);
+  const detectLoopRef = useRef<number | null>(null);
+  const detectionFrameRef = useRef(0);
+  const detectingRef = useRef(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [detections, setDetections] = useState<Detection[]>([]);
   const [fps, setFps] = useState(0);
-  const [yoloMs] = useState(0);
+  const [yoloMs, setYoloMs] = useState(0);
   const [trackMs] = useState(0);
+  const [yoloStatus, setYoloStatus] = useState<RuntimeStatus>({
+    label: "YOLO11n",
+    state: "loading",
+    detail: `Loading ${runtimeDefaults.yoloModelUrl}`,
+  });
   const [chatInput, setChatInput] = useState("");
   const [includeFrame, setIncludeFrame] = useState(true);
 
@@ -48,13 +62,15 @@ export default function Home() {
     [],
   );
 
-  const yoloStatus: RuntimeStatus = useMemo(
-    () => ({
-      label: "YOLO11n",
-      state: "idle",
-      detail: runtimeDefaults.yoloModelUrl,
-    }),
-    [],
+  const trackRows: TrackRow[] = useMemo(
+    () =>
+      detections.map((detection) => ({
+        id: detection.id,
+        label: detection.label,
+        confidence: detection.confidence,
+        ageMs: 0,
+      })),
+    [detections],
   );
 
   const stopCamera = useCallback(() => {
@@ -64,6 +80,8 @@ export default function Home() {
       videoRef.current.srcObject = null;
     }
     setCameraState((state) => (state === "error" ? "error" : "ready"));
+    setDetections([]);
+    detectionsRef.current = [];
     setFps(0);
   }, []);
 
@@ -126,6 +144,105 @@ export default function Home() {
   }, [refreshDevices, stopCamera]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadDetector = async () => {
+      setYoloStatus({
+        label: "YOLO11n",
+        state: "loading",
+        detail: `Loading ${runtimeDefaults.yoloModelUrl}`,
+      });
+
+      try {
+        const detector = await YoloDetector.create({
+          modelUrl: runtimeDefaults.yoloModelUrl,
+          inputSize: runtimeDefaults.yoloInputSize,
+          confidenceThreshold: runtimeDefaults.yoloConfidenceThreshold,
+          iouThreshold: runtimeDefaults.yoloIouThreshold,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        detectorRef.current = detector;
+        setYoloStatus({
+          label: "YOLO11n",
+          state: "ready",
+          detail: `${detector.backend.toUpperCase()} / ${runtimeDefaults.yoloModelUrl}`,
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Unknown YOLO load error.";
+        setYoloStatus({
+          label: "YOLO11n",
+          state: "error",
+          detail: message,
+        });
+      }
+    };
+
+    void loadDetector();
+
+    return () => {
+      cancelled = true;
+      detectorRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const detect = async () => {
+      const video = videoRef.current;
+      const detector = detectorRef.current;
+
+      if (
+        cameraState === "streaming" &&
+        video &&
+        detector &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0 &&
+        !detectingRef.current
+      ) {
+        detectionFrameRef.current += 1;
+
+        if (detectionFrameRef.current % Math.max(1, runtimeDefaults.yoloFrameInterval) === 0) {
+          detectingRef.current = true;
+          const startedAt = performance.now();
+
+          try {
+            const nextDetections = await detector.detect(video);
+            detectionsRef.current = nextDetections;
+            setDetections(nextDetections);
+            setYoloMs(performance.now() - startedAt);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown YOLO inference error.";
+            setYoloStatus((status) => ({
+              ...status,
+              state: "error",
+              detail: message,
+            }));
+          } finally {
+            detectingRef.current = false;
+          }
+        }
+      }
+
+      detectLoopRef.current = window.requestAnimationFrame(detect);
+    };
+
+    detectLoopRef.current = window.requestAnimationFrame(detect);
+
+    return () => {
+      if (detectLoopRef.current !== null) {
+        window.cancelAnimationFrame(detectLoopRef.current);
+      }
+    };
+  }, [cameraState]);
+
+  useEffect(() => {
     let animationFrame = 0;
     let lastPaint = performance.now();
     let frameCount = 0;
@@ -149,14 +266,7 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
-        context.strokeStyle = "rgba(125, 211, 252, 0.85)";
-        context.lineWidth = 2;
-        context.strokeRect(16, 16, Math.min(220, rect.width - 32), Math.min(120, rect.height - 32));
-        context.fillStyle = "rgba(8, 47, 73, 0.86)";
-        context.fillRect(16, 16, 126, 26);
-        context.fillStyle = "#e0f2fe";
-        context.font = "12px ui-sans-serif, system-ui";
-        context.fillText("overlay ready", 26, 34);
+        drawDetections(context, detectionsRef.current, video, rect.width, rect.height);
         context.restore();
 
         frameCount += 1;
@@ -243,19 +353,19 @@ export default function Home() {
           <div className="object-list">
             <div className="panel-heading">
               <h2>Tracked Objects</h2>
-              <span>{emptyTracks.length}</span>
+              <span>{trackRows.length}</span>
             </div>
             <div className="table-head">
               <span>ID</span>
               <span>Object</span>
               <span>Conf.</span>
             </div>
-            {emptyTracks.length === 0 ? (
+            {trackRows.length === 0 ? (
               <p className="empty-copy">No active tracks yet.</p>
             ) : (
-              emptyTracks.map((track) => (
+              trackRows.map((track) => (
                 <div className="track-row" key={track.id}>
-                  <span>#{track.id}</span>
+                  <span>{track.id}</span>
                   <span>{track.label}</span>
                   <span>{track.confidence.toFixed(2)}</span>
                 </div>
@@ -319,4 +429,53 @@ function StatusCard({ status }: { status: RuntimeStatus }) {
       <p>{status.detail}</p>
     </div>
   );
+}
+
+function drawDetections(
+  context: CanvasRenderingContext2D,
+  detections: Detection[],
+  video: HTMLVideoElement,
+  stageWidth: number,
+  stageHeight: number,
+) {
+  if (detections.length === 0) {
+    context.strokeStyle = "rgba(125, 211, 252, 0.4)";
+    context.lineWidth = 1.5;
+    context.strokeRect(16, 16, Math.min(220, stageWidth - 32), Math.min(120, stageHeight - 32));
+    context.fillStyle = "rgba(8, 47, 73, 0.78)";
+    context.fillRect(16, 16, 126, 26);
+    context.fillStyle = "#e0f2fe";
+    context.font = "12px ui-sans-serif, system-ui";
+    context.fillText("overlay ready", 26, 34);
+    return;
+  }
+
+  const videoRatio = video.videoWidth / video.videoHeight;
+  const stageRatio = stageWidth / stageHeight;
+  const drawWidth = stageRatio > videoRatio ? stageHeight * videoRatio : stageWidth;
+  const drawHeight = stageRatio > videoRatio ? stageHeight : stageWidth / videoRatio;
+  const offsetX = (stageWidth - drawWidth) / 2;
+  const offsetY = (stageHeight - drawHeight) / 2;
+  const scaleX = drawWidth / video.videoWidth;
+  const scaleY = drawHeight / video.videoHeight;
+
+  for (const detection of detections) {
+    const x = offsetX + detection.box.x * scaleX;
+    const y = offsetY + detection.box.y * scaleY;
+    const width = detection.box.width * scaleX;
+    const height = detection.box.height * scaleY;
+    const label = `${detection.label} ${detection.id} ${detection.confidence.toFixed(2)}`;
+    const labelWidth = Math.max(92, context.measureText(label).width + 16);
+    const labelY = y > 30 ? y - 28 : y + 4;
+
+    context.strokeStyle = "#2dd4bf";
+    context.lineWidth = 2;
+    context.strokeRect(x, y, width, height);
+
+    context.fillStyle = "rgba(15, 23, 42, 0.92)";
+    context.fillRect(x, labelY, labelWidth, 24);
+    context.fillStyle = "#ccfbf1";
+    context.font = "12px ui-sans-serif, system-ui";
+    context.fillText(label, x + 8, labelY + 16);
+  }
 }

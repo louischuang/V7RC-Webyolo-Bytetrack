@@ -26,6 +26,16 @@ models/
 
 The web app serves mounted model files as static assets and runs inference in Chrome.
 
+## Prepare YOLO11n
+
+The MVP expects `public/models/yolo/yolo11n.onnx` during local development.
+
+```bash
+bash scripts/prepare-yolo11n.sh
+```
+
+This creates a local Python virtual environment, installs Ultralytics, exports `yolo11n.pt` to ONNX, and copies it into the app's public model directory. The Docker setup can instead mount `./models/yolo/yolo11n.onnx` to `/app/public/models/yolo/yolo11n.onnx`.
+
 ## Docker
 
 ```bash

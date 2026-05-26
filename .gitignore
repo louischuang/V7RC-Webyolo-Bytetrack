@@ -5,7 +5,7 @@ dist/
 coverage/
 .env
 .env*.local
-models/
+/models/
 *.log
 *.tsbuildinfo
 .DS_Store
