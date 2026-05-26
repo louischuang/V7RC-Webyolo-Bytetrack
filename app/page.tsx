@@ -277,8 +277,8 @@ export default function Home() {
     }
   }, []);
 
-  const sendChatMessage = useCallback(async () => {
-    const prompt = chatInput.trim();
+  const runPrompt = useCallback(async (promptValue: string, options?: { includeScene?: boolean; label?: string }) => {
+    const prompt = promptValue.trim();
     if (!prompt || llmState === "loading" || llmState === "generating") {
       return;
     }
@@ -289,11 +289,11 @@ export default function Home() {
         { role: "user", content: prompt },
         { role: "assistant", content: "Load Gemma4-E2B first, then send the prompt again." },
       ]);
-      setChatInput("");
       return;
     }
 
-    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
+    const shouldIncludeScene = options?.includeScene ?? includeFrame;
+    const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
     const userMessage = sceneSummary ? `${prompt}\n\nCurrent tracked scene:\n${sceneSummary}` : prompt;
     const nextMessages: BrowserLlmMessage[] = [
       {
@@ -305,8 +305,8 @@ export default function Home() {
       { role: "user", content: userMessage },
     ];
 
-    setChatMessages((messages) => [...messages, { role: "user", content: prompt }]);
-    setChatInput("");
+    const visiblePrompt = options?.label ? `${options.label}\n${prompt}` : prompt;
+    setChatMessages((messages) => [...messages, { role: "user", content: visiblePrompt }]);
     setLlmState("generating");
     setLlmDetail("Generating response locally...");
 
@@ -327,7 +327,12 @@ export default function Home() {
       setLlmState("error");
       setLlmDetail(message);
     }
-  }, [chatInput, chatMessages, includeFrame, llmState]);
+  }, [chatMessages, includeFrame, llmState]);
+
+  const sendChatMessage = useCallback(async () => {
+    await runPrompt(chatInput);
+    setChatInput("");
+  }, [chatInput, runPrompt]);
 
   useEffect(() => {
     const detect = async () => {
@@ -545,6 +550,35 @@ export default function Home() {
               <span style={{ width: `${Math.round(llmProgress * 100)}%` }} />
             </div>
           ) : null}
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() =>
+              void runPrompt("Reply with exactly this sentence: Gemma local test OK.", {
+                includeScene: false,
+                label: "[Test Prompt 1]",
+              })
+            }
+            disabled={llmState === "loading" || llmState === "generating"}
+          >
+            Test 1
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() =>
+              void runPrompt(
+                "You are running locally in Chrome. In one short paragraph, summarize the current tracked scene and mention the active object IDs if any.",
+                {
+                  includeScene: true,
+                  label: "[Test Prompt 2]",
+                },
+              )
+            }
+            disabled={llmState === "loading" || llmState === "generating"}
+          >
+            Test 2
+          </button>
         </div>
         <form
           className="chat-form"
