@@ -30,6 +30,7 @@ body {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -58,6 +59,7 @@ button {
 .control-strip,
 .metric-strip,
 .status-title,
+.status-heading,
 .chat-form,
 .inline-toggle,
 .frame-toggle {
@@ -275,7 +277,13 @@ input {
 }
 
 .status-title {
+  justify-content: space-between;
   gap: 8px;
+}
+
+.status-heading {
+  gap: 8px;
+  min-width: 0;
 }
 
 .status-dot {
@@ -300,6 +308,12 @@ input {
 .status-card p {
   margin-top: 8px;
   overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.compact-button {
+  min-height: 30px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
@@ -347,9 +361,39 @@ input {
 
 .chat-panel {
   display: grid;
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
   gap: 12px;
   margin: 0 16px 16px;
   padding: 12px;
+}
+
+.prompt-panel,
+.conversation-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.prompt-field {
+  display: grid;
+  gap: 6px;
+}
+
+.prompt-field span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1218;
+  color: var(--text);
+  padding: 10px 12px;
+  line-height: 1.45;
 }
 
 .chat-log {
@@ -381,12 +425,6 @@ input {
   justify-self: start;
 }
 
-.llm-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
 .progress-track {
   position: relative;
   height: 8px;
@@ -401,6 +439,10 @@ input {
   inset: 0 auto 0 0;
   border-radius: inherit;
   background: var(--accent);
+}
+
+.status-progress {
+  margin-top: 10px;
 }
 
 .chat-form {
@@ -433,7 +475,8 @@ input {
 
 @media (max-width: 980px) {
   .top-menu,
-  .workspace {
+  .workspace,
+  .chat-panel {
     grid-template-columns: 1fr;
   }
 

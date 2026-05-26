@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
 import { type Detection, YoloDetector } from "./lib/yolo";
@@ -42,6 +42,12 @@ const runtimeDefaults = {
   llmRuntime: defaultLlmRuntime,
 };
 
+const defaultSystemPrompt =
+  "You are the perception and planning module for a mobile robot. Use the camera image, YOLO11n detections, and ByteTrack IDs to understand the world. Reply with concise observations and action-oriented guidance for future motor control, but do not claim that you have directly controlled any motors yet.";
+
+const defaultFixedPrompt =
+  "Focus on navigable space, nearby people or obstacles, tracked object IDs, and any motion-relevant risk.";
+
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -75,6 +81,8 @@ export default function Home() {
   });
   const [mirrorPreview, setMirrorPreview] = useState(true);
   const [chatInput, setChatInput] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
+  const [fixedPrompt, setFixedPrompt] = useState(defaultFixedPrompt);
   const [chatMessages, setChatMessages] = useState<BrowserLlmMessage[]>([
     {
       role: "assistant",
@@ -328,11 +336,17 @@ export default function Home() {
     const shouldIncludeScene = options?.includeScene ?? includeFrame;
     const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
     const imageDataUrl = shouldIncludeScene ? captureVideoFrame(videoRef.current) : undefined;
-    const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, options?.includeInstructions ?? true);
+    const fixedContext = fixedPrompt.trim();
+    const userMessage = buildGemmaUserPrompt(
+      fixedContext ? `${fixedContext}\n\n${prompt}` : prompt,
+      sceneSummary,
+      options?.includeInstructions ?? true,
+    );
     const history = options?.isolated
       ? []
       : chatMessages.filter((message) => message.role !== "system" && shouldSendChatHistory(message));
     const nextMessages: BrowserLlmMessage[] = [
+      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
       ...history,
       { role: "user", content: userMessage },
     ];
@@ -366,7 +380,7 @@ export default function Home() {
       setLlmState("error");
       setLlmDetail(message);
     }
-  }, [chatMessages, includeFrame, llmState]);
+  }, [chatMessages, fixedPrompt, includeFrame, llmState, systemPrompt]);
 
   const sendChatMessage = useCallback(async () => {
     await runPrompt(chatInput);
@@ -476,7 +490,7 @@ export default function Home() {
           <span className="brand-mark">V7</span>
           <div>
             <h1>V7RC WebYOLO ByteTrack</h1>
-            <p>Chrome-local camera, detection, tracking, and Gemma4-E2B chat</p>
+            <p>Robot perception loop with camera, detection, tracking, and Gemma4-E2B</p>
           </div>
         </div>
 
@@ -551,7 +565,20 @@ export default function Home() {
 
         <aside className="side-panel">
           <StatusCard status={yoloStatus} />
-          <StatusCard status={llmStatus} />
+          <StatusCard
+            status={llmStatus}
+            action={
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={loadGemma}
+                disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
+              >
+                {llmState === "ready" ? "Loaded" : "Load"}
+              </button>
+            }
+            progress={llmProgress}
+          />
           <div className="object-list">
             <div className="panel-heading">
               <h2>Tracked Objects</h2>
@@ -578,84 +605,50 @@ export default function Home() {
       </section>
 
       <section className="chat-panel">
-        <div className="chat-log">
-          {chatMessages.map((message, index) => (
-            <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
-              {message.content}
-            </div>
-          ))}
-        </div>
-        <div className="llm-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={loadGemma}
-            disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
-          >
-            {llmState === "ready" ? "Gemma Loaded" : "Load Gemma"}
-          </button>
-          {llmProgress !== null ? (
-            <div className="progress-track" aria-label="Gemma load progress">
-              <span style={{ width: `${Math.round(llmProgress * 100)}%` }} />
-            </div>
-          ) : null}
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() =>
-              void runPrompt("Output only this sentence: Gemma local test OK.", {
-                includeScene: false,
-                label: "[Test Prompt 1]",
-                isolated: true,
-                includeInstructions: false,
-              })
-            }
-            disabled={llmState === "loading" || llmState === "generating"}
-          >
-            Test 1
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() =>
-              void runPrompt(
-                "You are running locally in Chrome. In one short paragraph, summarize the current tracked scene and mention the active object IDs if any.",
-                {
-                  includeScene: true,
-                  label: "[Test Prompt 2]",
-                  isolated: true,
-                },
-              )
-            }
-            disabled={llmState === "loading" || llmState === "generating"}
-          >
-            Test 2
-          </button>
-        </div>
-        <form
-          className="chat-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void sendChatMessage();
-          }}
-        >
-          <label className="frame-toggle">
-            <input
-              type="checkbox"
-              checked={includeFrame}
-              onChange={(event) => setIncludeFrame(event.target.checked)}
-            />
-            <span>Include current frame</span>
+        <div className="prompt-panel">
+          <label className="prompt-field">
+            <span>System Prompt</span>
+            <textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} />
           </label>
-          <input
-            value={chatInput}
-            onChange={(event) => setChatInput(event.target.value)}
-            placeholder="Ask about the scene..."
-          />
-          <button type="submit" disabled={!chatInput.trim()}>
-            {llmState === "generating" ? "Thinking" : "Send"}
-          </button>
-        </form>
+          <label className="prompt-field">
+            <span>Fixed Prompt</span>
+            <textarea value={fixedPrompt} onChange={(event) => setFixedPrompt(event.target.value)} rows={3} />
+          </label>
+        </div>
+
+        <div className="conversation-panel">
+          <div className="chat-log">
+            {chatMessages.map((message, index) => (
+              <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
+                {message.content}
+              </div>
+            ))}
+          </div>
+          <form
+            className="chat-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendChatMessage();
+            }}
+          >
+            <label className="frame-toggle">
+              <input
+                type="checkbox"
+                checked={includeFrame}
+                onChange={(event) => setIncludeFrame(event.target.checked)}
+              />
+              <span>Include current frame</span>
+            </label>
+            <input
+              value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              placeholder="Ask the robot perception loop..."
+            />
+            <button type="submit" disabled={!chatInput.trim()}>
+              {llmState === "generating" ? "Thinking" : "Send"}
+            </button>
+          </form>
+        </div>
       </section>
     </main>
   );
@@ -763,14 +756,22 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusCard({ status }: { status: RuntimeStatus }) {
+function StatusCard({ status, action, progress }: { status: RuntimeStatus; action?: ReactNode; progress?: number | null }) {
   return (
     <div className="status-card">
       <div className="status-title">
-        <span className={`status-dot ${status.state}`} />
-        <h2>{status.label}</h2>
+        <div className="status-heading">
+          <span className={`status-dot ${status.state}`} />
+          <h2>{status.label}</h2>
+        </div>
+        {action}
       </div>
       <p>{status.detail}</p>
+      {progress !== null && progress !== undefined ? (
+        <div className="progress-track status-progress" aria-label={`${status.label} load progress`}>
+          <span style={{ width: `${Math.round(progress * 100)}%` }} />
+        </div>
+      ) : null}
     </div>
   );
 }

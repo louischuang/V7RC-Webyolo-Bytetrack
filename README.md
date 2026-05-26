@@ -121,3 +121,4 @@ On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone 
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
 - Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU generation in a Web Worker.
 - When `Include current frame` is enabled, the app captures the current webcam frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.
+- The bottom prompt area is split into a persistent robot system prompt, a fixed task prompt, and live chat input. This keeps the perception loop ready for later motor-control commands while the current MVP remains observation-only.
