@@ -126,6 +126,12 @@ h2 {
   text-transform: uppercase;
 }
 
+.field small {
+  min-height: 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 select,
 input {
   min-height: 38px;
@@ -137,6 +143,7 @@ input {
 }
 
 .primary-button,
+.icon-button,
 .secondary-button,
 .chat-form button {
   min-height: 38px;
@@ -154,7 +161,15 @@ input {
   color: var(--text);
 }
 
+.icon-button {
+  border: 1px solid var(--line);
+  background: #0e1218;
+  color: var(--text);
+  padding: 0 12px;
+}
+
 .primary-button:disabled,
+.icon-button:disabled,
 .secondary-button:disabled,
 .chat-form button:disabled {
   cursor: not-allowed;

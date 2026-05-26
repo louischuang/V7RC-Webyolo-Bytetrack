@@ -105,6 +105,23 @@ export default function Home() {
       })),
     [tracks],
   );
+  const selectedCamera = useMemo(
+    () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
+    [devices, selectedDeviceId],
+  );
+  const cameraDetail = useMemo(() => {
+    if (devices.length === 0) {
+      return "No camera detected";
+    }
+
+    if (!selectedCamera) {
+      return `${devices.length} camera${devices.length > 1 ? "s" : ""} available`;
+    }
+
+    return isIphoneCamera(selectedCamera)
+      ? "iPhone camera selected"
+      : `${devices.length} camera${devices.length > 1 ? "s" : ""} available`;
+  }, [devices, selectedCamera]);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -129,7 +146,7 @@ export default function Home() {
     const mediaDevices = await navigator.mediaDevices.enumerateDevices();
     const videoInputs = mediaDevices.filter((device) => device.kind === "videoinput");
     setDevices(videoInputs);
-    setSelectedDeviceId((current) => current || videoInputs[0]?.deviceId || "");
+    setSelectedDeviceId((current) => chooseCameraDeviceId(videoInputs, current));
   }, []);
 
   const startCamera = useCallback(async () => {
@@ -170,9 +187,15 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       void refreshDevices();
     }, 0);
+    const handleDeviceChange = () => {
+      void refreshDevices();
+    };
+
+    navigator.mediaDevices?.addEventListener?.("devicechange", handleDeviceChange);
 
     return () => {
       window.clearTimeout(timer);
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handleDeviceChange);
       stopCamera();
     };
   }, [refreshDevices, stopCamera]);
@@ -470,12 +493,22 @@ export default function Home() {
               ) : (
                 devices.map((device, index) => (
                   <option key={device.deviceId || index} value={device.deviceId}>
-                    {device.label || `Camera ${index + 1}`}
+                    {formatCameraLabel(device, index)}
                   </option>
                 ))
               )}
             </select>
+            <small>{cameraDetail}</small>
           </label>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void refreshDevices()}
+            disabled={cameraState === "requesting"}
+            title="Refresh cameras"
+          >
+            Refresh
+          </button>
 
           <button
             className="primary-button"
@@ -637,6 +670,30 @@ function buildSceneSummary(tracks: Track[]) {
     .slice(0, 12)
     .map((track) => `${track.id}: ${track.label}, confidence ${track.confidence.toFixed(2)}`)
     .join("\n");
+}
+
+function chooseCameraDeviceId(devices: MediaDeviceInfo[], currentDeviceId: string) {
+  if (currentDeviceId && devices.some((device) => device.deviceId === currentDeviceId)) {
+    return currentDeviceId;
+  }
+
+  return devices.find(isIphoneCamera)?.deviceId || devices[0]?.deviceId || "";
+}
+
+function isIphoneCamera(device: MediaDeviceInfo) {
+  const label = device.label.toLowerCase();
+  return (
+    label.includes("iphone") ||
+    label.includes("continuity") ||
+    label.includes("desk view") ||
+    label.includes("接續互通") ||
+    label.includes("連續互通")
+  );
+}
+
+function formatCameraLabel(device: MediaDeviceInfo, index: number) {
+  const label = device.label || `Camera ${index + 1}`;
+  return isIphoneCamera(device) ? `${label} (iPhone)` : label;
 }
 
 function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstructions: boolean) {

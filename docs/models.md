@@ -176,6 +176,17 @@ docker compose up --build
 
 Chrome downloads the model files from the web app and runs inference locally. Camera access works on `localhost`; production hostnames must use HTTPS for browser camera permissions.
 
+## Camera Sources
+
+The camera selector lists Chrome `videoinput` devices. On macOS, iPhone camera support comes through Apple's Continuity Camera and appears as another video input after Chrome has camera permission.
+
+Behavior:
+
+- iPhone, Continuity Camera, and Desk View labels are marked as iPhone options in the selector.
+- If no camera is selected yet, the app prefers an iPhone/Continuity camera when one is available.
+- The `Refresh` camera button reruns device enumeration after plugging in, waking, or selecting the iPhone camera from macOS.
+- The `devicechange` browser event also refreshes the list automatically when macOS reports a camera change.
+
 ## Tracking Runtime
 
 ByteTrack runs in the browser after YOLO inference. The current implementation keeps the tracker in TypeScript so it can share the same frame coordinates as the overlay and object list.

@@ -111,6 +111,10 @@ docker compose up --build
 
 Chrome camera access works on `localhost`. For production hosts, serve over HTTPS.
 
+## iPhone Camera on Mac
+
+On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone nearby, signed into the same Apple ID, with Wi-Fi and Bluetooth enabled. In Chrome, grant camera permission, then use `Refresh` in the Camera control if the iPhone does not appear immediately. The app marks iPhone/Continuity/Desk View devices in the camera picker and prefers them when no camera has been selected yet.
+
 ## Runtime Notes
 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
