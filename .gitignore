@@ -7,8 +7,10 @@ coverage/
 .env*.local
 /models/
 .venv-yolo/
+.venv-models/
 .model-export/
 public/models/**/*.onnx
+public/models/gemma4-e2b-it
 *.log
 *.tsbuildinfo
 tsconfig.tsbuildinfo

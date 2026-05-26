@@ -1,0 +1,17 @@
+.git
+.next
+node_modules
+out
+dist
+coverage
+.env
+.env*.local
+models
+.venv-yolo
+.venv-models
+.model-export
+public/models/gemma4-e2b-it
+public/models/**/*.onnx
+*.log
+*.tsbuildinfo
+.DS_Store

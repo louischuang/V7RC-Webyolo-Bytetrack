@@ -27,11 +27,10 @@ const runtimeDefaults = {
   yoloIouThreshold: Number(process.env.NEXT_PUBLIC_YOLO_IOU_THRESHOLD ?? 0.45),
   yoloFrameInterval: Number(process.env.NEXT_PUBLIC_YOLO_FRAME_INTERVAL ?? 3),
   llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? "gemma-4-E2B-it-q4f16_1-MLC",
-  llmModelUrl:
-    process.env.NEXT_PUBLIC_LLM_MODEL_URL ?? "https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC",
+  llmModelUrl: process.env.NEXT_PUBLIC_LLM_MODEL_URL ?? "/models/gemma4-e2b-it",
   llmModelLibUrl:
     process.env.NEXT_PUBLIC_LLM_MODEL_LIB_URL ??
-    "https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
+    "/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.7),
   llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webllm",

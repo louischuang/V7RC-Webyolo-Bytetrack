@@ -98,8 +98,8 @@ Default config:
 ```env
 NEXT_PUBLIC_LLM_RUNTIME=webllm
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_LIB_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=512
 NEXT_PUBLIC_LLM_TEMPERATURE=0.7
 ```
@@ -121,6 +121,14 @@ Then mount `./models` into the container so the app can serve it at:
 ```
 
 The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. Raw image-frame multimodal input is intentionally left for the next milestone because the current WebLLM artifact documents a validated text path.
+
+Download helper:
+
+```bash
+bash scripts/prepare-gemma4-e2b-webllm.sh
+```
+
+The helper downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` with `huggingface_hub` into `models/gemma4-e2b-it/` and creates a local development symlink at `public/models/gemma4-e2b-it`.
 
 ### Browser Cache Storage
 

@@ -35,8 +35,8 @@ Default browser model URLs:
 NEXT_PUBLIC_YOLO_MODEL_URL=/models/yolo/yolo11n.onnx
 NEXT_PUBLIC_LLM_RUNTIME=webllm
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC
-NEXT_PUBLIC_LLM_MODEL_LIB_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
 
 More details: [docs/models.md](docs/models.md).
@@ -57,9 +57,32 @@ Generated files are intentionally ignored by git:
 
 ```text
 .venv-yolo/
+.venv-models/
 .model-export/
 public/models/**/*.onnx
+public/models/gemma4-e2b-it
 models/
+```
+
+## Prepare Gemma4-E2B WebLLM
+
+Download the browser-ready Gemma4-E2B artifact to the host-side model volume:
+
+```bash
+bash scripts/prepare-gemma4-e2b-webllm.sh
+```
+
+This downloads `welcoma/gemma-4-E2B-it-q4f16_1-MLC` to:
+
+```text
+models/gemma4-e2b-it/
+```
+
+Docker Compose mounts `./models` into `/app/public/models`, so production can serve:
+
+```env
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
 
 ## Docker
