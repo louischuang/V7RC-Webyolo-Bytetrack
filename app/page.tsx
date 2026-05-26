@@ -66,6 +66,10 @@ export default function Home() {
   const detectLoopRef = useRef<number | null>(null);
   const detectionFrameRef = useRef(0);
   const detectingRef = useRef(false);
+  const inferenceLoopRef = useRef(false);
+  const inferenceRunningRef = useRef(false);
+  const inferenceRoundRef = useRef(0);
+  const runInferenceRoundRef = useRef<() => Promise<void>>(async () => {});
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -80,19 +84,20 @@ export default function Home() {
     detail: `Loading ${runtimeDefaults.yoloModelUrl}`,
   });
   const [mirrorPreview, setMirrorPreview] = useState(true);
-  const [chatInput, setChatInput] = useState("");
   const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
   const [fixedPrompt, setFixedPrompt] = useState(defaultFixedPrompt);
   const [chatMessages, setChatMessages] = useState<BrowserLlmMessage[]>([
     {
       role: "assistant",
-      content: "Gemma4-E2B is not loaded yet. Load the browser model to start local chat.",
+      content: "Gemma4-E2B is not loaded yet. Load the browser model to start the perception loop.",
     },
   ]);
   const [llmState, setLlmState] = useState<BrowserLlmStatus>("checking");
   const [llmDetail, setLlmDetail] = useState("Checking WebGPU support...");
   const [llmProgress, setLlmProgress] = useState<number | null>(null);
   const [includeFrame, setIncludeFrame] = useState(true);
+  const [loopRunning, setLoopRunning] = useState(false);
+  const [lastInferenceMs, setLastInferenceMs] = useState<number | null>(null);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -315,61 +320,52 @@ export default function Home() {
     }
   }, []);
 
-  const runPrompt = useCallback(async (
-    promptValue: string,
-    options?: { includeScene?: boolean; label?: string; isolated?: boolean; includeInstructions?: boolean },
-  ) => {
-    const prompt = promptValue.trim();
-    if (!prompt || llmState === "loading" || llmState === "generating") {
+  const runInferenceRound = useCallback(async () => {
+    if (inferenceRunningRef.current) {
       return;
     }
 
     if (!llmRef.current) {
       setChatMessages((messages) => [
         ...messages,
-        { role: "user", content: prompt },
-        { role: "assistant", content: "Load Gemma4-E2B first, then send the prompt again." },
+        { role: "assistant", content: "Load Gemma4-E2B first, then start the perception loop." },
       ]);
+      inferenceLoopRef.current = false;
+      setLoopRunning(false);
       return;
     }
 
-    const shouldIncludeScene = options?.includeScene ?? includeFrame;
-    const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
-    const imageDataUrl = shouldIncludeScene ? captureVideoFrame(videoRef.current) : undefined;
-    const fixedContext = fixedPrompt.trim();
-    const userMessage = buildGemmaUserPrompt(
-      fixedContext ? `${fixedContext}\n\n${prompt}` : prompt,
-      sceneSummary,
-      options?.includeInstructions ?? true,
-    );
-    const history = options?.isolated
-      ? []
-      : chatMessages.filter((message) => message.role !== "system" && shouldSendChatHistory(message));
+    const prompt = fixedPrompt.trim() || defaultFixedPrompt;
+    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
+    const imageDataUrl = includeFrame ? captureVideoFrame(videoRef.current) : undefined;
+    const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, true);
     const nextMessages: BrowserLlmMessage[] = [
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
-      ...history,
       { role: "user", content: userMessage },
     ];
+    const round = inferenceRoundRef.current + 1;
+    const startedAt = performance.now();
 
-    const visiblePrompt = options?.label ? `${options.label}\n${prompt}` : prompt;
-    setChatMessages((messages) => [...messages, { role: "user", content: visiblePrompt }]);
+    inferenceRunningRef.current = true;
+    inferenceRoundRef.current = round;
+    setChatMessages((messages) => [
+      ...messages.slice(-24),
+      { role: "user", content: `[Round ${round}] ${prompt}` },
+    ]);
     setLlmState("generating");
-    setLlmDetail("Generating response locally...");
+    setLlmDetail(`Generating local loop round ${round}...`);
 
     try {
       const generation = await llmRef.current.generate(nextMessages, imageDataUrl);
+      const elapsedMs = performance.now() - startedAt;
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
-      const shouldShowDiagnostics = emptyResponse && Boolean(options?.label) && generation.diagnostics.length > 0;
       const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
+      setLastInferenceMs(elapsedMs);
       setChatMessages((messages) => [
-        ...messages,
+        ...messages.slice(-24),
         {
           role: "assistant",
-          content: emptyResponse
-            ? fallbackResponse
-            : shouldShowDiagnostics
-              ? `${generation.text}\n\nDiagnostics:\n${generation.diagnostics.join("\n")}`
-              : generation.text,
+          content: `${emptyResponse ? fallbackResponse : generation.text}\n\nInference time: ${formatDuration(elapsedMs)}`,
         },
       ]);
       setLlmState("ready");
@@ -379,13 +375,40 @@ export default function Home() {
       setChatMessages((messages) => [...messages, { role: "assistant", content: message }]);
       setLlmState("error");
       setLlmDetail(message);
+      inferenceLoopRef.current = false;
+      setLoopRunning(false);
+    } finally {
+      inferenceRunningRef.current = false;
+      if (inferenceLoopRef.current) {
+        window.setTimeout(() => {
+          void runInferenceRoundRef.current();
+        }, 100);
+      }
     }
-  }, [chatMessages, fixedPrompt, includeFrame, llmState, systemPrompt]);
+  }, [fixedPrompt, includeFrame, systemPrompt]);
 
-  const sendChatMessage = useCallback(async () => {
-    await runPrompt(chatInput);
-    setChatInput("");
-  }, [chatInput, runPrompt]);
+  useEffect(() => {
+    runInferenceRoundRef.current = runInferenceRound;
+  }, [runInferenceRound]);
+
+  const toggleInferenceLoop = useCallback(() => {
+    if (inferenceLoopRef.current) {
+      inferenceLoopRef.current = false;
+      setLoopRunning(false);
+      setLlmDetail(
+        inferenceRunningRef.current
+          ? "Stopping after the current local inference finishes..."
+          : llmRef.current
+            ? `${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`
+            : llmDetail,
+      );
+      return;
+    }
+
+    inferenceLoopRef.current = true;
+    setLoopRunning(true);
+    void runInferenceRoundRef.current();
+  }, [llmDetail]);
 
   useEffect(() => {
     const detect = async () => {
@@ -624,13 +647,7 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <form
-            className="chat-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendChatMessage();
-            }}
-          >
+          <div className="loop-controls">
             <label className="frame-toggle">
               <input
                 type="checkbox"
@@ -639,15 +656,11 @@ export default function Home() {
               />
               <span>Include current frame</span>
             </label>
-            <input
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              placeholder="Ask the robot perception loop..."
-            />
-            <button type="submit" disabled={!chatInput.trim()}>
-              {llmState === "generating" ? "Thinking" : "Send"}
+            {lastInferenceMs !== null && <span className="loop-timing">Last run {formatDuration(lastInferenceMs)}</span>}
+            <button type="button" onClick={toggleInferenceLoop} disabled={llmState === "loading"}>
+              {loopRunning ? "停止" : "開始"}
             </button>
-          </form>
+          </div>
         </div>
       </section>
     </main>
@@ -735,16 +748,12 @@ function isDegenerateLlmResponse(response: string) {
   return text.length > 0 && text.length < 8 && !/[a-z0-9\u4e00-\u9fff]/iu.test(text);
 }
 
-function shouldSendChatHistory(message: BrowserLlmMessage) {
-  if (message.role === "assistant") {
-    return (
-      !message.content.startsWith("Gemma4-E2B is not loaded yet.") &&
-      !message.content.startsWith("Load Gemma4-E2B first") &&
-      !message.content.startsWith("The local model returned an empty response.")
-    );
+function formatDuration(milliseconds: number) {
+  if (milliseconds < 1000) {
+    return `${Math.round(milliseconds)} ms`;
   }
 
-  return true;
+  return `${(milliseconds / 1000).toFixed(2)} s`;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
