@@ -59,6 +59,7 @@ export default function Home() {
     state: "loading",
     detail: `Loading ${runtimeDefaults.yoloModelUrl}`,
   });
+  const [mirrorPreview, setMirrorPreview] = useState(true);
   const [chatInput, setChatInput] = useState("");
   const [includeFrame, setIncludeFrame] = useState(true);
 
@@ -280,7 +281,7 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
-        drawDetections(context, tracksRef.current, video, rect.width, rect.height);
+        drawDetections(context, tracksRef.current, video, rect.width, rect.height, mirrorPreview);
         context.restore();
 
         frameCount += 1;
@@ -297,7 +298,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, []);
+  }, [mirrorPreview]);
 
   return (
     <main className="app-shell">
@@ -338,6 +339,14 @@ export default function Home() {
           >
             {cameraState === "streaming" ? "Stop" : "Start"}
           </button>
+          <label className="inline-toggle">
+            <input
+              type="checkbox"
+              checked={mirrorPreview}
+              onChange={(event) => setMirrorPreview(event.target.checked)}
+            />
+            <span>Mirror</span>
+          </label>
         </div>
 
         <div className="metric-strip">
@@ -350,7 +359,7 @@ export default function Home() {
       <section className="workspace">
         <div className="camera-panel">
           <div className="video-stage">
-            <video ref={videoRef} muted playsInline />
+            <video className={mirrorPreview ? "mirrored" : undefined} ref={videoRef} muted playsInline />
             <canvas ref={canvasRef} aria-hidden="true" />
             {cameraState !== "streaming" ? (
               <div className="stage-empty">
@@ -451,6 +460,7 @@ function drawDetections(
   video: HTMLVideoElement,
   stageWidth: number,
   stageHeight: number,
+  mirrorPreview: boolean,
 ) {
   if (detections.length === 0) {
     context.strokeStyle = "rgba(125, 211, 252, 0.4)";
@@ -475,10 +485,11 @@ function drawDetections(
 
   for (const detection of detections) {
     const boxColor = "#2dd4bf";
-    const x = offsetX + detection.box.x * scaleX;
+    const unmirroredX = offsetX + detection.box.x * scaleX;
     const y = offsetY + detection.box.y * scaleY;
     const width = detection.box.width * scaleX;
     const height = detection.box.height * scaleY;
+    const x = mirrorPreview ? stageWidth - unmirroredX - width : unmirroredX;
     const label = `${detection.label} ${detection.id} ${detection.confidence.toFixed(2)}`;
     const labelY = y > 30 ? y - 28 : y + 4;
 
