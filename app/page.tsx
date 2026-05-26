@@ -116,6 +116,7 @@ export default function Home() {
   const inferenceRunningRef = useRef(false);
   const inferenceRoundRef = useRef(0);
   const runInferenceRoundRef = useRef<() => Promise<void>>(async () => {});
+  const sourceDeepLinkAppliedRef = useRef(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -278,14 +279,10 @@ export default function Home() {
     setFps(0);
   }, []);
 
-  const startUrlSource = useCallback(async () => {
-    if (sourceMode === "camera") {
-      return;
-    }
-
-    const url = streamUrls[sourceMode].trim();
+  const startUrlSourceWith = useCallback(async (mode: Exclude<SourceMode, "camera">, sourceUrl: string) => {
+    const url = sourceUrl.trim();
     if (!url) {
-      setCameraError(`${sourceMode.toUpperCase()} URL is required.`);
+      setCameraError(`${mode.toUpperCase()} URL is required.`);
       setCameraState("error");
       return;
     }
@@ -295,7 +292,7 @@ export default function Home() {
     stopCamera();
 
     try {
-      if (sourceMode === "mjpg") {
+      if (mode === "mjpg") {
         if (!imageRef.current) {
           throw new Error("MJPG image surface is not ready.");
         }
@@ -307,10 +304,10 @@ export default function Home() {
         return;
       }
 
-      if (sourceMode === "rtsp" || sourceMode === "youtube") {
+      if (mode === "rtsp" || mode === "youtube") {
         setGatewayStatus("connecting");
         setGatewayDetail("Requesting stream gateway conversion...");
-        const gatewayStream = await createGatewayStream(sourceMode, url);
+        const gatewayStream = await createGatewayStream(mode, url);
         gatewayStreamIdRef.current = gatewayStream.id;
         setGatewayStreamId(gatewayStream.id);
         setGatewayStatus("streaming");
@@ -336,15 +333,23 @@ export default function Home() {
       setSourceSurface("video");
       setCameraState("streaming");
     } catch (error) {
-      const message = error instanceof Error ? error.message : `Could not start ${sourceMode.toUpperCase()} stream.`;
+      const message = error instanceof Error ? error.message : `Could not start ${mode.toUpperCase()} stream.`;
       setCameraError(message);
-      if (sourceMode === "rtsp" || sourceMode === "youtube") {
+      if (mode === "rtsp" || mode === "youtube") {
         setGatewayStatus("error");
         setGatewayDetail(message);
       }
       setCameraState("error");
     }
-  }, [sourceMode, stopCamera, streamUrls]);
+  }, [stopCamera]);
+
+  const startUrlSource = useCallback(async () => {
+    if (sourceMode === "camera") {
+      return;
+    }
+
+    await startUrlSourceWith(sourceMode, streamUrls[sourceMode]);
+  }, [sourceMode, startUrlSourceWith, streamUrls]);
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -637,6 +642,33 @@ export default function Home() {
       [mode]: url,
     }));
   }, []);
+
+  useEffect(() => {
+    if (sourceDeepLinkAppliedRef.current) {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const deepLinkSource = parseSourceMode(params.get("source"));
+    if (!deepLinkSource || deepLinkSource === "camera") {
+      sourceDeepLinkAppliedRef.current = true;
+      return;
+    }
+
+    const deepLinkUrl = params.get("url") || "";
+    sourceDeepLinkAppliedRef.current = true;
+
+    queueMicrotask(() => {
+      setSourceMode(deepLinkSource);
+      if (deepLinkUrl) {
+        setStreamUrl(deepLinkSource, deepLinkUrl);
+      }
+
+      if (deepLinkUrl && params.get("autostart") === "1") {
+        void startUrlSourceWith(deepLinkSource, deepLinkUrl);
+      }
+    });
+  }, [setStreamUrl, startUrlSourceWith]);
 
   const checkGatewayHealth = useCallback(async () => {
     setGatewayStatus("checking");
@@ -1193,6 +1225,14 @@ function getSourcePlaceholder(sourceMode: Exclude<SourceMode, "camera">) {
   }
 
   return "https://www.youtube.com/watch?v=...";
+}
+
+function parseSourceMode(value: string | null): SourceMode | null {
+  if (value === "camera" || value === "mjpg" || value === "rtsp" || value === "youtube") {
+    return value;
+  }
+
+  return null;
 }
 
 async function getGatewayHealth(): Promise<{ ok: boolean; sessions: number }> {

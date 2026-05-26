@@ -38,8 +38,10 @@
 - [x] Route camera, video URL, and MJPG image sources through the same YOLO/ByteTrack pipeline.
 - [x] Capture the active source frame for Gemma multimodal prompts.
 - [x] Add source-specific startup and error messages.
+- [x] Add source deep links with optional autostart for unattended Chrome tests and robot launch flows.
 - [ ] Validate CORS behavior for MJPG/HLS streams because canvas capture requires readable media.
-- [ ] Add tests or manual validation notes for camera, MJPG, HLS URL, RTSP gateway URL, and YouTube gateway URL.
+- [ ] Add tests or manual validation notes for camera, MJPG, HLS URL, and RTSP gateway URL.
+- [x] Validate YouTube gateway URL in Chrome with Docker web, YOLO11n WebGPU, and ByteTrack.
 
 ## Phase 2.6 - Stream Gateway MVP
 

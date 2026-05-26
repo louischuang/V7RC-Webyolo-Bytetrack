@@ -82,6 +82,8 @@ For production, copy the exported file to:
 models/yolo/yolo11n.onnx
 ```
 
+The Docker Compose web service mounts `./models` to `/app/public/models:ro`, so `models/yolo/yolo11n.onnx` must exist for containerized YOLO inference. Local development can still use `public/models/yolo/yolo11n.onnx`.
+
 ## Gemma4-E2B
 
 MVP chat design:
@@ -139,6 +141,8 @@ Prepare it with:
 ```bash
 bash scripts/prepare-gemma4-e2b-webllm.sh
 ```
+
+The helper creates `models/gemma4-e2b-it/resolve/main` as a real directory with file symlinks. Do not replace it with a symlink back to `..`; that creates a recursive path that prevents Next.js production servers from starting.
 
 ### Browser Cache Storage
 

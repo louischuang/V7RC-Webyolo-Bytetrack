@@ -35,7 +35,14 @@ ln -s "../../models/gemma4-e2b-it" "${PUBLIC_LINK}"
 
 mkdir -p "${MODEL_DIR}/resolve"
 rm -rf "${MODEL_DIR}/resolve/main"
-ln -s ".." "${MODEL_DIR}/resolve/main"
+mkdir -p "${MODEL_DIR}/resolve/main"
+for artifact in "${MODEL_DIR}"/*; do
+  artifact_name="$(basename "${artifact}")"
+  if [ "${artifact_name}" = "resolve" ]; then
+    continue
+  fi
+  ln -s "../../${artifact_name}" "${MODEL_DIR}/resolve/main/${artifact_name}"
+done
 
 cat <<EOF
 Gemma4-E2B WebLLM artifact ready:

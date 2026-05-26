@@ -76,6 +76,13 @@ bash scripts/prepare-yolo11n.sh
 
 This creates a local Python virtual environment, installs Ultralytics, exports `yolo11n.pt` to ONNX, and copies it into the app's public model directory. The Docker setup can instead mount `./models/yolo/yolo11n.onnx` to `/app/public/models/yolo/yolo11n.onnx`.
 
+For Docker testing or production, keep a copy under the host model volume:
+
+```bash
+mkdir -p models/yolo
+cp public/models/yolo/yolo11n.onnx models/yolo/yolo11n.onnx
+```
+
 Generated files are intentionally ignored by git:
 
 ```text
@@ -134,6 +141,12 @@ docker compose up --build
 ```
 
 Chrome camera access works on `localhost`. For production hosts, serve over HTTPS.
+
+Source deep links are supported for unattended browser tests and robot launch flows:
+
+```text
+http://localhost:3000/?source=youtube&autostart=1&url=https%3A%2F%2Fyoutu.be%2F...
+```
 
 ## iPhone Camera on Mac
 
