@@ -13,18 +13,31 @@ Open `http://localhost:3000` in Chrome.
 
 ## Model Storage
 
-Large model artifacts should live outside the Docker image:
+Large model artifacts should live outside the Docker image. The app serves model artifacts as static files, but inference runs in Chrome.
 
 ```text
-models/
+public/models/              # local development path
   yolo/
     yolo11n.onnx
-    coco.names
+  gemma4-e2b-it/
+    ...
+
+models/                     # production host-mounted path
+  yolo/
+    yolo11n.onnx
   gemma4-e2b-it/
     ...
 ```
 
-The web app serves mounted model files as static assets and runs inference in Chrome.
+Default browser model URLs:
+
+```env
+NEXT_PUBLIC_YOLO_MODEL_URL=/models/yolo/yolo11n.onnx
+NEXT_PUBLIC_LLM_MODEL_ID=google/gemma-4-E2B-it
+NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+```
+
+More details: [docs/models.md](docs/models.md).
 
 ## Prepare YOLO11n
 
@@ -35,6 +48,15 @@ bash scripts/prepare-yolo11n.sh
 ```
 
 This creates a local Python virtual environment, installs Ultralytics, exports `yolo11n.pt` to ONNX, and copies it into the app's public model directory. The Docker setup can instead mount `./models/yolo/yolo11n.onnx` to `/app/public/models/yolo/yolo11n.onnx`.
+
+Generated files are intentionally ignored by git:
+
+```text
+.venv-yolo/
+.model-export/
+public/models/**/*.onnx
+models/
+```
 
 ## Docker
 

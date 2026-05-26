@@ -11,4 +11,5 @@ coverage/
 public/models/**/*.onnx
 *.log
 *.tsbuildinfo
+tsconfig.tsbuildinfo
 .DS_Store
