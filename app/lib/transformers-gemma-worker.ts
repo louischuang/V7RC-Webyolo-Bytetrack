@@ -76,17 +76,21 @@ async function generateText(request: Extract<WorkerRequest, { type: "generate" }
   }
 
   const hfMessages = request.messages.map((message, index) => {
-    const content: Array<{ type: "image" } | { type: "text"; text: string }> = [];
     const isLastUserMessage = message.role === "user" && index === request.messages.length - 1;
 
     if (request.imageDataUrl && isLastUserMessage) {
-      content.push({ type: "image" });
+      return {
+        role: message.role,
+        content: [
+          { type: "image" },
+          { type: "text", text: message.content },
+        ],
+      };
     }
-    content.push({ type: "text", text: message.content });
 
     return {
       role: message.role,
-      content,
+      content: message.content,
     };
   });
   const diagnostics = [
