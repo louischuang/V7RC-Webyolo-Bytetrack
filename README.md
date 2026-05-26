@@ -33,8 +33,10 @@ Default browser model URLs:
 
 ```env
 NEXT_PUBLIC_YOLO_MODEL_URL=/models/yolo/yolo11n.onnx
-NEXT_PUBLIC_LLM_MODEL_ID=google/gemma-4-E2B-it
-NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+NEXT_PUBLIC_LLM_RUNTIME=webllm
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
+NEXT_PUBLIC_LLM_MODEL_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC
+NEXT_PUBLIC_LLM_MODEL_LIB_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
 
 More details: [docs/models.md](docs/models.md).
@@ -70,4 +72,4 @@ Chrome camera access works on `localhost`. For production hosts, serve over HTTP
 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
-- Gemma4-E2B is planned as browser-local WebGPU inference, not a backend API.
+- Gemma4-E2B runs through browser-local WebLLM/WebGPU text generation. Current frame context is summarized from active tracks; raw image multimodal input is the next milestone.

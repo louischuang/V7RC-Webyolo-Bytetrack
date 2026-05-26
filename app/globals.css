@@ -137,6 +137,7 @@ input {
 }
 
 .primary-button,
+.secondary-button,
 .chat-form button {
   min-height: 38px;
   border: 0;
@@ -147,7 +148,14 @@ input {
   padding: 0 16px;
 }
 
+.secondary-button {
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
 .primary-button:disabled,
+.secondary-button:disabled,
 .chat-form button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -330,7 +338,11 @@ input {
 }
 
 .chat-log {
+  display: grid;
+  max-height: 220px;
   min-height: 92px;
+  gap: 8px;
+  overflow: auto;
 }
 
 .message {
@@ -341,6 +353,39 @@ input {
   padding: 10px 12px;
   color: #dbeafe;
   font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.user-message {
+  justify-self: end;
+  background: rgba(45, 212, 191, 0.12);
+  color: #ccfbf1;
+}
+
+.assistant-message {
+  justify-self: start;
+}
+
+.llm-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.progress-track {
+  position: relative;
+  height: 8px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #0e1218;
+}
+
+.progress-track span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent);
 }
 
 .chat-form {

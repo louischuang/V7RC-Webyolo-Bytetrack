@@ -87,23 +87,28 @@ models/yolo/yolo11n.onnx
 MVP chat design:
 
 - Source model ID: `google/gemma-4-E2B-it`
+- Source model ID: `google/gemma-4-E2B-it`
 - Execution target: browser, not a server API
-- Preferred runtime: WebGPU-capable browser runtime such as Transformers.js, WebLLM, MLC WebLLM, or another compatible package
-- Preferred artifact: browser-ready quantized package derived from `google/gemma-4-E2B-it`
+- Runtime: WebLLM / MLC WebGPU
+- Current artifact: `welcoma/gemma-4-E2B-it-q4f16_1-MLC`
+- Current scope: text generation path validated by the artifact publisher
 
 Default config:
 
 ```env
-NEXT_PUBLIC_LLM_RUNTIME=webgpu
-NEXT_PUBLIC_LLM_MODEL_ID=google/gemma-4-E2B-it
-NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
+NEXT_PUBLIC_LLM_RUNTIME=webllm
+NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
+NEXT_PUBLIC_LLM_MODEL_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC
+NEXT_PUBLIC_LLM_MODEL_LIB_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=512
 NEXT_PUBLIC_LLM_TEMPERATURE=0.7
 ```
 
 Important deployment note:
 
-The raw Hugging Face safetensors checkpoint is the source model, not necessarily the final browser artifact. For browser deployment, prefer a runtime-specific package such as an MLC/WebLLM or Transformers.js-compatible quantized artifact. Store it under:
+The raw Hugging Face safetensors checkpoint is the source model, not necessarily the final browser artifact. For browser deployment, prefer a runtime-specific package such as an MLC/WebLLM or Transformers.js-compatible quantized artifact.
+
+The first integrated runtime uses the public WebLLM package documented by MLC and the community MLC artifact `welcoma/gemma-4-E2B-it-q4f16_1-MLC`. First load downloads model shards into the browser cache. For offline production, mirror the artifact under:
 
 ```text
 models/gemma4-e2b-it/
@@ -114,6 +119,8 @@ Then mount `./models` into the container so the app can serve it at:
 ```text
 /models/gemma4-e2b-it
 ```
+
+The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. Raw image-frame multimodal input is intentionally left for the next milestone because the current WebLLM artifact documents a validated text path.
 
 ## Docker Deployment
 

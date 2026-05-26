@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ByteTracker, type Track } from "./lib/bytetrack";
+import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
 import { type Detection, YoloDetector } from "./lib/yolo";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
@@ -25,8 +26,15 @@ const runtimeDefaults = {
   yoloConfidenceThreshold: Number(process.env.NEXT_PUBLIC_YOLO_CONF_THRESHOLD ?? 0.25),
   yoloIouThreshold: Number(process.env.NEXT_PUBLIC_YOLO_IOU_THRESHOLD ?? 0.45),
   yoloFrameInterval: Number(process.env.NEXT_PUBLIC_YOLO_FRAME_INTERVAL ?? 3),
-  llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? "google/gemma-4-E2B-it",
-  llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webgpu",
+  llmModelId: process.env.NEXT_PUBLIC_LLM_MODEL_ID ?? "gemma-4-E2B-it-q4f16_1-MLC",
+  llmModelUrl:
+    process.env.NEXT_PUBLIC_LLM_MODEL_URL ?? "https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC",
+  llmModelLibUrl:
+    process.env.NEXT_PUBLIC_LLM_MODEL_LIB_URL ??
+    "https://huggingface.co/welcoma/gemma-4-E2B-it-q4f16_1-MLC/resolve/main/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
+  llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
+  llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.7),
+  llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webllm",
 };
 
 export default function Home() {
@@ -34,6 +42,7 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<YoloDetector | null>(null);
+  const llmRef = useRef<BrowserLlm | null>(null);
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
       highThreshold: Number(process.env.NEXT_PUBLIC_TRACK_HIGH_THRESH ?? 0.6),
@@ -61,15 +70,24 @@ export default function Home() {
   });
   const [mirrorPreview, setMirrorPreview] = useState(true);
   const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<BrowserLlmMessage[]>([
+    {
+      role: "assistant",
+      content: "Gemma4-E2B is not loaded yet. Load the browser model to start local chat.",
+    },
+  ]);
+  const [llmState, setLlmState] = useState<BrowserLlmStatus>("checking");
+  const [llmDetail, setLlmDetail] = useState("Checking WebGPU support...");
+  const [llmProgress, setLlmProgress] = useState<number | null>(null);
   const [includeFrame, setIncludeFrame] = useState(true);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
       label: "Gemma4-E2B",
-      state: "idle",
-      detail: `${runtimeDefaults.llmRuntime} / ${runtimeDefaults.llmModelId}`,
+      state: llmState === "checking" || llmState === "loading" || llmState === "generating" ? "loading" : llmState,
+      detail: llmDetail,
     }),
-    [],
+    [llmDetail, llmState],
   );
 
   const trackRows: TrackRow[] = useMemo(
@@ -203,6 +221,114 @@ export default function Home() {
       detectorRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkGpu = async () => {
+      setLlmState("checking");
+      const status = await getWebGpuStatus();
+      if (cancelled) {
+        return;
+      }
+
+      if (status.ok) {
+        setLlmState("idle");
+      } else {
+        setLlmState("error");
+      }
+      setLlmDetail(status.detail);
+    };
+
+    void checkGpu();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadGemma = useCallback(async () => {
+    setLlmState("loading");
+    setLlmProgress(0);
+    setLlmDetail(`Loading ${runtimeDefaults.llmModelId}`);
+
+    try {
+      const llm = new BrowserLlm({
+        modelId: runtimeDefaults.llmModelId,
+        modelUrl: runtimeDefaults.llmModelUrl,
+        modelLibUrl: runtimeDefaults.llmModelLibUrl,
+        maxNewTokens: runtimeDefaults.llmMaxNewTokens,
+        temperature: runtimeDefaults.llmTemperature,
+      });
+
+      await llm.load((progress) => {
+        setLlmDetail(progress.text);
+        setLlmProgress(typeof progress.progress === "number" ? progress.progress : null);
+      });
+
+      llmRef.current = llm;
+      setLlmState("ready");
+      setLlmProgress(null);
+      setLlmDetail(`${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Gemma load error.";
+      setLlmState("error");
+      setLlmProgress(null);
+      setLlmDetail(message);
+    }
+  }, []);
+
+  const sendChatMessage = useCallback(async () => {
+    const prompt = chatInput.trim();
+    if (!prompt || llmState === "loading" || llmState === "generating") {
+      return;
+    }
+
+    if (!llmRef.current) {
+      setChatMessages((messages) => [
+        ...messages,
+        { role: "user", content: prompt },
+        { role: "assistant", content: "Load Gemma4-E2B first, then send the prompt again." },
+      ]);
+      setChatInput("");
+      return;
+    }
+
+    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
+    const userMessage = sceneSummary ? `${prompt}\n\nCurrent tracked scene:\n${sceneSummary}` : prompt;
+    const nextMessages: BrowserLlmMessage[] = [
+      {
+        role: "system",
+        content:
+          "You are a concise local vision assistant. Use the tracked scene summary when provided. Do not claim to see raw pixels unless an image is explicitly provided.",
+      },
+      ...chatMessages.filter((message) => message.role !== "system"),
+      { role: "user", content: userMessage },
+    ];
+
+    setChatMessages((messages) => [...messages, { role: "user", content: prompt }]);
+    setChatInput("");
+    setLlmState("generating");
+    setLlmDetail("Generating response locally...");
+
+    try {
+      const response = await llmRef.current.generate(nextMessages);
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          role: "assistant",
+          content: response || "The local model returned an empty response.",
+        },
+      ]);
+      setLlmState("ready");
+      setLlmDetail(`${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Gemma generation error.";
+      setChatMessages((messages) => [...messages, { role: "assistant", content: message }]);
+      setLlmState("error");
+      setLlmDetail(message);
+    }
+  }, [chatInput, chatMessages, includeFrame, llmState]);
 
   useEffect(() => {
     const detect = async () => {
@@ -400,15 +526,32 @@ export default function Home() {
 
       <section className="chat-panel">
         <div className="chat-log">
-          <div className="message system-message">
-            Browser-local Gemma4-E2B runtime is planned for the next implementation phase.
-          </div>
+          {chatMessages.map((message, index) => (
+            <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
+              {message.content}
+            </div>
+          ))}
+        </div>
+        <div className="llm-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={loadGemma}
+            disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
+          >
+            {llmState === "ready" ? "Gemma Loaded" : "Load Gemma"}
+          </button>
+          {llmProgress !== null ? (
+            <div className="progress-track" aria-label="Gemma load progress">
+              <span style={{ width: `${Math.round(llmProgress * 100)}%` }} />
+            </div>
+          ) : null}
         </div>
         <form
           className="chat-form"
           onSubmit={(event) => {
             event.preventDefault();
-            setChatInput("");
+            void sendChatMessage();
           }}
         >
           <label className="frame-toggle">
@@ -425,12 +568,23 @@ export default function Home() {
             placeholder="Ask about the scene..."
           />
           <button type="submit" disabled={!chatInput.trim()}>
-            Send
+            {llmState === "generating" ? "Thinking" : "Send"}
           </button>
         </form>
       </section>
     </main>
   );
+}
+
+function buildSceneSummary(tracks: Track[]) {
+  if (tracks.length === 0) {
+    return "No active tracked objects.";
+  }
+
+  return tracks
+    .slice(0, 12)
+    .map((track) => `${track.id}: ${track.label}, confidence ${track.confidence.toFixed(2)}`)
+    .join("\n");
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

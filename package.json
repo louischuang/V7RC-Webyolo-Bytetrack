@@ -10,6 +10,7 @@
     "typecheck": "next build --experimental-build-mode compile"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.83",
     "next": "^16.2.6",
     "onnxruntime-web": "^1.22.0",
     "react": "^19.1.0",
