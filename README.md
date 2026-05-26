@@ -41,6 +41,8 @@ NEXT_PUBLIC_LLM_MODEL_LIB_URL=https://huggingface.co/welcoma/gemma-4-E2B-it-q4f1
 
 More details: [docs/models.md](docs/models.md).
 
+Gemma model downloads are cached by WebLLM in browser-managed storage such as IndexedDB, not JavaScript `localStorage`. Clearing Chrome site data will remove the browser-side cached model.
+
 ## Prepare YOLO11n
 
 The MVP expects `public/models/yolo/yolo11n.onnx` during local development.

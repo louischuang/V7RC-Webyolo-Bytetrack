@@ -122,6 +122,24 @@ Then mount `./models` into the container so the app can serve it at:
 
 The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. Raw image-frame multimodal input is intentionally left for the next milestone because the current WebLLM artifact documents a validated text path.
 
+### Browser Cache Storage
+
+Do not use JavaScript `localStorage` for Gemma model files. `localStorage` is too small and string-only, so it is suitable for settings but not model weights.
+
+WebLLM should cache model artifacts in browser storage, typically IndexedDB and related browser-managed cache storage. The current adapter enables:
+
+```ts
+useIndexedDBCache: true
+```
+
+Practical behavior:
+
+- First `Load Gemma` downloads model shards and the WebGPU WASM library.
+- Chrome stores those artifacts under this site's browser data.
+- Later loads should reuse the local browser cache instead of re-downloading everything.
+- Clearing site data, using a different browser profile, or changing host/origin can remove or bypass that cache.
+- For production, keep a host-side copy under `models/gemma4-e2b-it/` as the deployable source, then let each browser cache it locally after first use.
+
 ## Docker Deployment
 
 Expected host tree:
