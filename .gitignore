@@ -6,6 +6,9 @@ coverage/
 .env
 .env*.local
 /models/
+.venv-yolo/
+.model-export/
+public/models/**/*.onnx
 *.log
 *.tsbuildinfo
 .DS_Store
