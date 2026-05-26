@@ -42,11 +42,17 @@ const runtimeDefaults = {
   llmRuntime: defaultLlmRuntime,
 };
 
-const defaultSystemPrompt =
+const legacyDefaultSystemPrompt =
   "You are the perception and planning module for a mobile robot. Use the camera image, YOLO11n detections, and ByteTrack IDs to understand the world. Reply with concise observations and action-oriented guidance for future motor control, but do not claim that you have directly controlled any motors yet.";
 
-const defaultFixedPrompt =
+const legacyDefaultFixedPrompt =
   "Focus on navigable space, nearby people or obstacles, tracked object IDs, and any motion-relevant risk.";
+
+const defaultSystemPrompt =
+  "你是行動機器人的感知與規劃模組。請使用目前的攝影機影像、YOLO11n 偵測結果，以及 ByteTrack 追蹤 ID 來理解周圍世界。回覆時請保持精簡，描述重要觀察，並提供可用於後續馬達控制的行動建議；但不要宣稱你已經直接控制任何馬達。";
+
+const defaultFixedPrompt =
+  "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 
@@ -161,10 +167,16 @@ export default function Home() {
           setIncludeFrame(cachedSettings.includeFrame);
         }
         if (typeof cachedSettings?.systemPrompt === "string") {
-          setSystemPrompt(cachedSettings.systemPrompt);
+          setSystemPrompt(
+            cachedSettings.systemPrompt === legacyDefaultSystemPrompt
+              ? defaultSystemPrompt
+              : cachedSettings.systemPrompt,
+          );
         }
         if (typeof cachedSettings?.fixedPrompt === "string") {
-          setFixedPrompt(cachedSettings.fixedPrompt);
+          setFixedPrompt(
+            cachedSettings.fixedPrompt === legacyDefaultFixedPrompt ? defaultFixedPrompt : cachedSettings.fixedPrompt,
+          );
         }
         setSettingsHydrated(true);
       });
@@ -762,12 +774,12 @@ export default function Home() {
 
 function buildSceneSummary(tracks: Track[]) {
   if (tracks.length === 0) {
-    return "No active tracked objects.";
+    return "目前沒有正在追蹤的物件。";
   }
 
   return tracks
     .slice(0, 12)
-    .map((track) => `${track.id}: ${track.label}, confidence ${track.confidence.toFixed(2)}`)
+    .map((track) => `${track.id}: ${track.label}，信心值 ${track.confidence.toFixed(2)}`)
     .join("\n");
 }
 
@@ -797,14 +809,14 @@ function formatCameraLabel(device: MediaDeviceInfo, index: number) {
 
 function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstructions: boolean) {
   const instructions =
-    "You are a concise local vision assistant. Use the attached image when provided, and use the tracked scene summary as supporting metadata.";
+    "你是一個在本機瀏覽器執行的精簡視覺助理。若有附上影像，請以影像為主要依據，並將追蹤場景摘要作為輔助資訊。";
   const basePrompt = includeInstructions ? `${instructions}\n\n${prompt}` : prompt;
 
   if (!sceneSummary) {
     return basePrompt;
   }
 
-  return `${basePrompt}\n\nCurrent tracked scene:\n${sceneSummary}`;
+  return `${basePrompt}\n\n目前追蹤場景：\n${sceneSummary}`;
 }
 
 function captureVideoFrame(video: HTMLVideoElement | null) {
