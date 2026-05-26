@@ -34,6 +34,8 @@ type PreprocessResult = {
   sourceHeight: number;
 };
 
+export type DetectableSource = HTMLVideoElement | HTMLImageElement;
+
 export class YoloDetector {
   private constructor(
     private readonly ort: OrtModule,
@@ -61,8 +63,8 @@ export class YoloDetector {
     }
   }
 
-  async detect(video: HTMLVideoElement): Promise<Detection[]> {
-    const frame = preprocessVideoFrame(video, this.config.inputSize);
+  async detect(source: DetectableSource): Promise<Detection[]> {
+    const frame = preprocessSourceFrame(source, this.config.inputSize);
     const inputName = this.session.inputNames[0];
     const inputTensor = new this.ort.Tensor("float32", frame.data, [
       1,
@@ -89,9 +91,8 @@ export class YoloDetector {
   }
 }
 
-function preprocessVideoFrame(video: HTMLVideoElement, inputSize: number): PreprocessResult {
-  const sourceWidth = video.videoWidth;
-  const sourceHeight = video.videoHeight;
+function preprocessSourceFrame(source: DetectableSource, inputSize: number): PreprocessResult {
+  const { width: sourceWidth, height: sourceHeight } = getSourceDimensions(source);
   const scale = Math.min(inputSize / sourceWidth, inputSize / sourceHeight);
   const drawWidth = Math.round(sourceWidth * scale);
   const drawHeight = Math.round(sourceHeight * scale);
@@ -108,7 +109,7 @@ function preprocessVideoFrame(video: HTMLVideoElement, inputSize: number): Prepr
 
   context.fillStyle = "rgb(114, 114, 114)";
   context.fillRect(0, 0, inputSize, inputSize);
-  context.drawImage(video, padX, padY, drawWidth, drawHeight);
+  context.drawImage(source, padX, padY, drawWidth, drawHeight);
 
   const pixels = context.getImageData(0, 0, inputSize, inputSize).data;
   const planeSize = inputSize * inputSize;
@@ -121,6 +122,20 @@ function preprocessVideoFrame(video: HTMLVideoElement, inputSize: number): Prepr
   }
 
   return { data, scale, padX, padY, sourceWidth, sourceHeight };
+}
+
+function getSourceDimensions(source: DetectableSource) {
+  if (source instanceof HTMLVideoElement) {
+    return {
+      width: source.videoWidth,
+      height: source.videoHeight,
+    };
+  }
+
+  return {
+    width: source.naturalWidth,
+    height: source.naturalHeight,
+  };
 }
 
 function decodeDetections(

@@ -116,6 +116,37 @@ h2 {
   font-size: 12px;
 }
 
+.source-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.source-switch span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.source-switch button {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1218;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.source-switch button.active {
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(45, 212, 191, 0.14);
+  color: #99f6e4;
+}
+
 .control-strip {
   gap: 10px;
 }
@@ -124,6 +155,10 @@ h2 {
   display: grid;
   gap: 6px;
   min-width: 280px;
+}
+
+.stream-url-field {
+  min-width: min(520px, 48vw);
 }
 
 .field span {
@@ -239,16 +274,22 @@ input {
 }
 
 .video-stage video,
+.video-stage img,
 .video-stage canvas,
 .stage-empty {
   position: absolute;
   inset: 0;
 }
 
-.video-stage video {
+.video-stage video,
+.video-stage img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.video-stage .hidden-source {
+  display: none;
 }
 
 .video-stage video.mirrored {

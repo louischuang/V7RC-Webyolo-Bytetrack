@@ -3,9 +3,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
-import { type Detection, YoloDetector } from "./lib/yolo";
+import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
+type SourceMode = "camera" | "mjpg" | "rtsp" | "youtube";
 
 type RuntimeStatus = {
   label: string;
@@ -55,9 +56,16 @@ const defaultFixedPrompt =
   "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
+const sourceModes: Array<{ id: SourceMode; label: string }> = [
+  { id: "camera", label: "Camera" },
+  { id: "mjpg", label: "MJPG" },
+  { id: "rtsp", label: "RTSP" },
+  { id: "youtube", label: "YouTube" },
+];
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -83,6 +91,12 @@ export default function Home() {
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("camera");
+  const [streamUrls, setStreamUrls] = useState<Record<Exclude<SourceMode, "camera">, string>>({
+    mjpg: "",
+    rtsp: "",
+    youtube: "",
+  });
   const [tracks, setTracks] = useState<Track[]>([]);
   const [fps, setFps] = useState(0);
   const [yoloMs, setYoloMs] = useState(0);
@@ -130,6 +144,10 @@ export default function Home() {
     [devices, selectedDeviceId],
   );
   const cameraDetail = useMemo(() => {
+    if (sourceMode !== "camera") {
+      return `${sourceMode.toUpperCase()} stream URL`;
+    }
+
     if (devices.length === 0) {
       return "No camera detected";
     }
@@ -141,7 +159,7 @@ export default function Home() {
     return isIphoneCamera(selectedCamera)
       ? "iPhone camera selected"
       : `${devices.length} camera${devices.length > 1 ? "s" : ""} available`;
-  }, [devices, selectedCamera]);
+  }, [devices, selectedCamera, sourceMode]);
 
   useEffect(() => {
     let cachedSettings: Partial<{
@@ -204,7 +222,13 @@ export default function Home() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
+      videoRef.current.pause();
       videoRef.current.srcObject = null;
+      videoRef.current.removeAttribute("src");
+      videoRef.current.load();
+    }
+    if (imageRef.current) {
+      imageRef.current.removeAttribute("src");
     }
     setCameraState((state) => (state === "error" ? "error" : "ready"));
     trackerRef.current.reset();
@@ -212,6 +236,50 @@ export default function Home() {
     tracksRef.current = [];
     setFps(0);
   }, []);
+
+  const startUrlSource = useCallback(async () => {
+    if (sourceMode === "camera") {
+      return;
+    }
+
+    const url = streamUrls[sourceMode].trim();
+    if (!url) {
+      setCameraError(`${sourceMode.toUpperCase()} URL is required.`);
+      setCameraState("error");
+      return;
+    }
+
+    setCameraError("");
+    setCameraState("requesting");
+    stopCamera();
+
+    try {
+      if (sourceMode === "mjpg") {
+        if (!imageRef.current) {
+          throw new Error("MJPG image surface is not ready.");
+        }
+
+        imageRef.current.crossOrigin = "anonymous";
+        imageRef.current.src = url;
+        setCameraState("streaming");
+        return;
+      }
+
+      if (!videoRef.current) {
+        throw new Error("Video surface is not ready.");
+      }
+
+      videoRef.current.crossOrigin = "anonymous";
+      videoRef.current.src = url;
+      videoRef.current.muted = true;
+      await videoRef.current.play();
+      setCameraState("streaming");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Could not start ${sourceMode.toUpperCase()} stream.`;
+      setCameraError(message);
+      setCameraState("error");
+    }
+  }, [sourceMode, stopCamera, streamUrls]);
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -401,7 +469,7 @@ export default function Home() {
 
     const prompt = fixedPrompt.trim() || defaultFixedPrompt;
     const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
-    const imageDataUrl = includeFrame ? captureVideoFrame(videoRef.current) : undefined;
+    const imageDataUrl = includeFrame ? captureSourceFrame(getActiveSource(sourceMode, videoRef.current, imageRef.current)) : undefined;
     const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, true);
     const nextMessages: BrowserLlmMessage[] = [
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
@@ -445,7 +513,7 @@ export default function Home() {
         }, 100);
       }
     }
-  }, [fixedPrompt, includeFrame, systemPrompt]);
+  }, [fixedPrompt, includeFrame, sourceMode, systemPrompt]);
 
   useEffect(() => {
     runInferenceRoundRef.current = runInferenceRound;
@@ -482,17 +550,36 @@ export default function Home() {
     void runInferenceRoundRef.current();
   }, [llmDetail]);
 
+  const selectSourceMode = useCallback(
+    (nextMode: SourceMode) => {
+      if (nextMode === sourceMode) {
+        return;
+      }
+
+      stopCamera();
+      setCameraError("");
+      setSourceMode(nextMode);
+    },
+    [sourceMode, stopCamera],
+  );
+
+  const setStreamUrl = useCallback((mode: Exclude<SourceMode, "camera">, url: string) => {
+    setStreamUrls((current) => ({
+      ...current,
+      [mode]: url,
+    }));
+  }, []);
+
   useEffect(() => {
     const detect = async () => {
-      const video = videoRef.current;
+      const source = getActiveSource(sourceMode, videoRef.current, imageRef.current);
       const detector = detectorRef.current;
 
       if (
         cameraState === "streaming" &&
-        video &&
+        source &&
         detector &&
-        video.videoWidth > 0 &&
-        video.videoHeight > 0 &&
+        isSourceReady(source) &&
         !detectingRef.current
       ) {
         detectionFrameRef.current += 1;
@@ -502,7 +589,7 @@ export default function Home() {
           const startedAt = performance.now();
 
           try {
-            const nextDetections = await detector.detect(video);
+            const nextDetections = await detector.detect(source);
             setYoloMs(performance.now() - startedAt);
 
             const trackStartedAt = performance.now();
@@ -533,7 +620,7 @@ export default function Home() {
         window.cancelAnimationFrame(detectLoopRef.current);
       }
     };
-  }, [cameraState]);
+  }, [cameraState, sourceMode]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -541,12 +628,12 @@ export default function Home() {
     let frameCount = 0;
 
     const paint = () => {
-      const video = videoRef.current;
+      const source = getActiveSource(sourceMode, videoRef.current, imageRef.current);
       const canvas = canvasRef.current;
       const context = canvas?.getContext("2d");
 
-      if (video && canvas && context && video.videoWidth > 0 && video.videoHeight > 0) {
-        const rect = video.getBoundingClientRect();
+      if (source && canvas && context && isSourceReady(source)) {
+        const rect = source.getBoundingClientRect();
         const pixelRatio = window.devicePixelRatio || 1;
         const nextWidth = Math.round(rect.width * pixelRatio);
         const nextHeight = Math.round(rect.height * pixelRatio);
@@ -559,7 +646,7 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
-        drawDetections(context, tracksRef.current, video, rect.width, rect.height, mirrorPreview);
+        drawDetections(context, tracksRef.current, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
         context.restore();
 
         frameCount += 1;
@@ -576,7 +663,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, [mirrorPreview]);
+  }, [mirrorPreview, sourceMode]);
 
   return (
     <main className="app-shell">
@@ -586,55 +673,86 @@ export default function Home() {
           <div>
             <h1>V7RC WebYOLO ByteTrack</h1>
             <p>Robot perception loop with camera, detection, tracking, and Gemma4-E2B</p>
+            <div className="source-switch" aria-label="Source">
+              <span>Source</span>
+              {sourceModes.map((mode) => (
+                <button
+                  className={sourceMode === mode.id ? "active" : undefined}
+                  type="button"
+                  key={mode.id}
+                  onClick={() => selectSourceMode(mode.id)}
+                  disabled={cameraState === "requesting"}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="control-strip">
-          <label className="field">
-            <span>Camera</span>
-            <select
-              value={selectedDeviceId}
-              onChange={(event) => setSelectedDeviceId(event.target.value)}
-              disabled={cameraState === "requesting"}
-            >
-              {devices.length === 0 ? (
-                <option value="">No camera listed</option>
-              ) : (
-                devices.map((device, index) => (
-                  <option key={device.deviceId || index} value={device.deviceId}>
-                    {formatCameraLabel(device, index)}
-                  </option>
-                ))
-              )}
-            </select>
-            <small>{cameraDetail}</small>
-          </label>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => void refreshDevices()}
-            disabled={cameraState === "requesting"}
-            title="Refresh cameras"
-          >
-            Refresh
-          </button>
+          {sourceMode === "camera" ? (
+            <>
+              <label className="field">
+                <span>Camera</span>
+                <select
+                  value={selectedDeviceId}
+                  onChange={(event) => setSelectedDeviceId(event.target.value)}
+                  disabled={cameraState === "requesting"}
+                >
+                  {devices.length === 0 ? (
+                    <option value="">No camera listed</option>
+                  ) : (
+                    devices.map((device, index) => (
+                      <option key={device.deviceId || index} value={device.deviceId}>
+                        {formatCameraLabel(device, index)}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <small>{cameraDetail}</small>
+              </label>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => void refreshDevices()}
+                disabled={cameraState === "requesting"}
+                title="Refresh cameras"
+              >
+                Refresh
+              </button>
+            </>
+          ) : (
+            <label className="field stream-url-field">
+              <span>{sourceMode.toUpperCase()} URL</span>
+              <input
+                value={streamUrls[sourceMode]}
+                onChange={(event) => setStreamUrl(sourceMode, event.target.value)}
+                disabled={cameraState === "requesting"}
+                placeholder={getSourcePlaceholder(sourceMode)}
+              />
+              <small>{cameraDetail}</small>
+            </label>
+          )}
 
           <button
             className="primary-button"
             type="button"
-            onClick={cameraState === "streaming" ? stopCamera : startCamera}
+            onClick={cameraState === "streaming" ? stopCamera : sourceMode === "camera" ? startCamera : startUrlSource}
             disabled={cameraState === "requesting"}
           >
             {cameraState === "streaming" ? "Stop" : "Start"}
           </button>
-          <label className="inline-toggle">
-            <input
-              type="checkbox"
-              checked={mirrorPreview}
-              onChange={(event) => setMirrorPreview(event.target.checked)}
-            />
-            <span>Mirror</span>
-          </label>
+          {sourceMode === "camera" ? (
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={mirrorPreview}
+                onChange={(event) => setMirrorPreview(event.target.checked)}
+              />
+              <span>Mirror</span>
+            </label>
+          ) : null}
         </div>
 
         <div className="metric-strip">
@@ -647,12 +765,29 @@ export default function Home() {
       <section className="workspace">
         <div className="camera-panel">
           <div className="video-stage">
-            <video className={mirrorPreview ? "mirrored" : undefined} ref={videoRef} muted playsInline />
+            <video
+              className={sourceMode === "mjpg" ? "hidden-source" : sourceMode === "camera" && mirrorPreview ? "mirrored" : undefined}
+              ref={videoRef}
+              muted
+              playsInline
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element -- MJPG streams need a raw img surface. */}
+            <img
+              alt=""
+              className={sourceMode === "mjpg" ? undefined : "hidden-source"}
+              ref={imageRef}
+              onError={() => {
+                if (sourceMode === "mjpg") {
+                  setCameraError("Could not load MJPG stream.");
+                  setCameraState("error");
+                }
+              }}
+            />
             <canvas ref={canvasRef} aria-hidden="true" />
             {cameraState !== "streaming" ? (
               <div className="stage-empty">
-                <strong>{cameraState === "requesting" ? "Requesting camera" : "Camera idle"}</strong>
-                <span>{cameraError || "Select a camera and start the local pipeline."}</span>
+                <strong>{cameraState === "requesting" ? `Requesting ${sourceMode}` : `${sourceMode.toUpperCase()} idle`}</strong>
+                <span>{cameraError || "Select a source and start the local pipeline."}</span>
               </div>
             ) : null}
           </div>
@@ -845,15 +980,55 @@ function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstr
   return `${basePrompt}\n\n目前追蹤場景：\n${sceneSummary}`;
 }
 
-function captureVideoFrame(video: HTMLVideoElement | null) {
-  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+function getActiveSource(
+  sourceMode: SourceMode,
+  video: HTMLVideoElement | null,
+  image: HTMLImageElement | null,
+): DetectableSource | null {
+  return sourceMode === "mjpg" ? image : video;
+}
+
+function isSourceReady(source: DetectableSource) {
+  const dimensions = getSourceDimensions(source);
+  return dimensions.width > 0 && dimensions.height > 0;
+}
+
+function getSourceDimensions(source: DetectableSource) {
+  if (source instanceof HTMLVideoElement) {
+    return {
+      width: source.videoWidth,
+      height: source.videoHeight,
+    };
+  }
+
+  return {
+    width: source.naturalWidth,
+    height: source.naturalHeight,
+  };
+}
+
+function getSourcePlaceholder(sourceMode: Exclude<SourceMode, "camera">) {
+  if (sourceMode === "mjpg") {
+    return "http://robot.local:8080/video.mjpg";
+  }
+
+  if (sourceMode === "rtsp") {
+    return "https://host/stream.m3u8 or converted RTSP stream URL";
+  }
+
+  return "https://host/youtube-proxy/stream.m3u8";
+}
+
+function captureSourceFrame(source: DetectableSource | null) {
+  if (!source || !isSourceReady(source)) {
     return undefined;
   }
 
+  const dimensions = getSourceDimensions(source);
   const maxSide = 768;
-  const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
-  const width = Math.max(1, Math.round(video.videoWidth * scale));
-  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  const scale = Math.min(1, maxSide / Math.max(dimensions.width, dimensions.height));
+  const width = Math.max(1, Math.round(dimensions.width * scale));
+  const height = Math.max(1, Math.round(dimensions.height * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -862,7 +1037,7 @@ function captureVideoFrame(video: HTMLVideoElement | null) {
     return undefined;
   }
 
-  context.drawImage(video, 0, 0, width, height);
+  context.drawImage(source, 0, 0, width, height);
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
@@ -919,7 +1094,7 @@ function StatusCard({ status, action, progress }: { status: RuntimeStatus; actio
 function drawDetections(
   context: CanvasRenderingContext2D,
   detections: Detection[],
-  video: HTMLVideoElement,
+  source: DetectableSource,
   stageWidth: number,
   stageHeight: number,
   mirrorPreview: boolean,
@@ -936,14 +1111,15 @@ function drawDetections(
     return;
   }
 
-  const videoRatio = video.videoWidth / video.videoHeight;
+  const dimensions = getSourceDimensions(source);
+  const videoRatio = dimensions.width / dimensions.height;
   const stageRatio = stageWidth / stageHeight;
   const drawWidth = stageRatio > videoRatio ? stageHeight * videoRatio : stageWidth;
   const drawHeight = stageRatio > videoRatio ? stageHeight : stageWidth / videoRatio;
   const offsetX = (stageWidth - drawWidth) / 2;
   const offsetY = (stageHeight - drawHeight) / 2;
-  const scaleX = drawWidth / video.videoWidth;
-  const scaleY = drawHeight / video.videoHeight;
+  const scaleX = drawWidth / dimensions.width;
+  const scaleY = drawHeight / dimensions.height;
 
   for (const detection of detections) {
     const boxColor = "#2dd4bf";
