@@ -304,6 +304,7 @@ export default function Home() {
 
     const shouldIncludeScene = options?.includeScene ?? includeFrame;
     const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
+    const imageDataUrl = shouldIncludeScene ? captureVideoFrame(videoRef.current) : undefined;
     const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, options?.includeInstructions ?? true);
     const history = options?.isolated
       ? []
@@ -319,7 +320,7 @@ export default function Home() {
     setLlmDetail("Generating response locally...");
 
     try {
-      const generation = await llmRef.current.generate(nextMessages);
+      const generation = await llmRef.current.generate(nextMessages, imageDataUrl);
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
       const shouldShowDiagnostics = emptyResponse && Boolean(options?.label) && generation.diagnostics.length > 0;
       const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
@@ -640,7 +641,7 @@ function buildSceneSummary(tracks: Track[]) {
 
 function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstructions: boolean) {
   const instructions =
-    "You are a concise local vision assistant. Use the tracked scene summary when provided. Do not claim to see raw pixels unless an image is explicitly provided.";
+    "You are a concise local vision assistant. Use the attached image when provided, and use the tracked scene summary as supporting metadata.";
   const basePrompt = includeInstructions ? `${instructions}\n\n${prompt}` : prompt;
 
   if (!sceneSummary) {
@@ -648,6 +649,27 @@ function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstr
   }
 
   return `${basePrompt}\n\nCurrent tracked scene:\n${sceneSummary}`;
+}
+
+function captureVideoFrame(video: HTMLVideoElement | null) {
+  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return undefined;
+  }
+
+  const maxSide = 768;
+  const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+  const width = Math.max(1, Math.round(video.videoWidth * scale));
+  const height = Math.max(1, Math.round(video.videoHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return undefined;
+  }
+
+  context.drawImage(video, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", 0.85);
 }
 
 function buildLocalFallbackResponse(sceneSummary: string, diagnostics: string[]) {

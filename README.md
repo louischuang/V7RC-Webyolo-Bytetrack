@@ -115,4 +115,5 @@ Chrome camera access works on `localhost`. For production hosts, serve over HTTP
 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
-- Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU text generation in a Web Worker. Current frame context is summarized from active tracks; raw image multimodal input is the next milestone.
+- Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU generation in a Web Worker.
+- When `Include current frame` is enabled, the app captures the current webcam frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.

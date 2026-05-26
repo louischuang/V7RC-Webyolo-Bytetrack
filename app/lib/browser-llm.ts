@@ -139,9 +139,9 @@ export class BrowserLlm {
     });
   }
 
-  async generate(messages: BrowserLlmMessage[]) {
+  async generate(messages: BrowserLlmMessage[], imageDataUrl?: string) {
     if (this.config.runtime === "transformers") {
-      return this.generateWithTransformers(messages);
+      return this.generateWithTransformers(messages, imageDataUrl);
     }
 
     if (!this.engine) {
@@ -244,11 +244,12 @@ export class BrowserLlm {
     );
   }
 
-  private async generateWithTransformers(messages: BrowserLlmMessage[]): Promise<BrowserLlmGeneration> {
+  private async generateWithTransformers(messages: BrowserLlmMessage[], imageDataUrl?: string): Promise<BrowserLlmGeneration> {
     this.ensureWorker();
     return (await this.postWorkerRequest({
       type: "generate",
       messages,
+      imageDataUrl,
       maxNewTokens: this.config.maxNewTokens,
       temperature: this.config.temperature,
     })) as BrowserLlmGeneration;

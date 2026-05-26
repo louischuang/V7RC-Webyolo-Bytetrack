@@ -120,7 +120,7 @@ Then mount `./models` into the container so the app can serve it at:
 /models/gemma4-e2b-it-onnx
 ```
 
-The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. Raw image-frame multimodal input is intentionally left for the next milestone because the current WebLLM artifact documents a validated text path.
+The current chat implementation sends text plus an optional summary of active YOLO/ByteTrack tracks. With the default Transformers.js ONNX runtime, `Include current frame` also captures the current webcam frame as a JPEG image and sends it as a Gemma4 multimodal image input.
 
 Download helper:
 

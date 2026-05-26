@@ -1,4 +1,4 @@
-import { AutoProcessor, Gemma4ForConditionalGeneration, TextStreamer, env } from "@huggingface/transformers";
+import { AutoProcessor, Gemma4ForConditionalGeneration, TextStreamer, env, load_image } from "@huggingface/transformers";
 import type { BrowserLlmMessage } from "./browser-llm";
 
 type WorkerRequest =
@@ -13,6 +13,7 @@ type WorkerRequest =
       id: number;
       type: "generate";
       messages: BrowserLlmMessage[];
+      imageDataUrl?: string;
       maxNewTokens: number;
       temperature: number;
     };
@@ -74,13 +75,24 @@ async function generateText(request: Extract<WorkerRequest, { type: "generate" }
     throw new Error("Gemma ONNX model is not loaded.");
   }
 
-  const hfMessages = request.messages.map((message) => ({
-    role: message.role,
-    content: [{ type: "text", text: message.content }],
-  }));
+  const hfMessages = request.messages.map((message, index) => {
+    const content: Array<{ type: "image" } | { type: "text"; text: string }> = [];
+    const isLastUserMessage = message.role === "user" && index === request.messages.length - 1;
+
+    if (request.imageDataUrl && isLastUserMessage) {
+      content.push({ type: "image" });
+    }
+    content.push({ type: "text", text: message.content });
+
+    return {
+      role: message.role,
+      content,
+    };
+  });
   const diagnostics = [
     "runtime=transformers-worker",
     `messages=${request.messages.length}`,
+    `image=${request.imageDataUrl ? "true" : "false"}`,
     `max_new_tokens=${request.maxNewTokens}`,
   ];
   const prompt = processor.apply_chat_template(hfMessages, {
@@ -89,7 +101,8 @@ async function generateText(request: Extract<WorkerRequest, { type: "generate" }
   });
   diagnostics.push(`prompt_len=${String(prompt).length}`);
 
-  const inputs = await processor(prompt, null, null, {
+  const image = request.imageDataUrl ? await load_image(request.imageDataUrl) : null;
+  const inputs = await processor(prompt, image, null, {
     add_special_tokens: false,
   });
   let streamed = "";
