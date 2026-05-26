@@ -63,6 +63,7 @@ button {
 .status-actions,
 .modal-title,
 .modal-actions,
+.conversation-footer,
 .loop-controls,
 .inline-toggle,
 .frame-toggle {
@@ -427,6 +428,14 @@ textarea {
   min-height: 92px;
   gap: 8px;
   overflow: auto;
+}
+
+.conversation-footer {
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .message {

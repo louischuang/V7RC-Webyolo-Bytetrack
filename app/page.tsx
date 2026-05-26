@@ -59,6 +59,7 @@ const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<YoloDetector | null>(null);
   const llmRef = useRef<BrowserLlm | null>(null);
@@ -101,6 +102,7 @@ export default function Home() {
   const [includeFrame, setIncludeFrame] = useState(true);
   const [loopRunning, setLoopRunning] = useState(false);
   const [lastInferenceMs, setLastInferenceMs] = useState<number | null>(null);
+  const [responseCount, setResponseCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
 
@@ -405,17 +407,12 @@ export default function Home() {
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
       { role: "user", content: userMessage },
     ];
-    const round = inferenceRoundRef.current + 1;
     const startedAt = performance.now();
 
     inferenceRunningRef.current = true;
-    inferenceRoundRef.current = round;
-    setChatMessages((messages) => [
-      ...messages.slice(-24),
-      { role: "user", content: `[Round ${round}] ${prompt}` },
-    ]);
+    inferenceRoundRef.current += 1;
     setLlmState("generating");
-    setLlmDetail(`Generating local loop round ${round}...`);
+    setLlmDetail(`Generating local loop round ${inferenceRoundRef.current}...`);
 
     try {
       const generation = await llmRef.current.generate(nextMessages, imageDataUrl);
@@ -423,11 +420,12 @@ export default function Home() {
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
       const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
       setLastInferenceMs(elapsedMs);
+      setResponseCount((count) => count + 1);
       setChatMessages((messages) => [
         ...messages.slice(-24),
         {
           role: "assistant",
-          content: `${emptyResponse ? fallbackResponse : generation.text}\n\nInference time: ${formatDuration(elapsedMs)}`,
+          content: emptyResponse ? fallbackResponse : generation.text,
         },
       ]);
       setLlmState("ready");
@@ -452,6 +450,18 @@ export default function Home() {
   useEffect(() => {
     runInferenceRoundRef.current = runInferenceRound;
   }, [runInferenceRound]);
+
+  useEffect(() => {
+    const chatLog = chatLogRef.current;
+    if (!chatLog) {
+      return;
+    }
+
+    chatLog.scrollTo({
+      top: chatLog.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [chatMessages]);
 
   const toggleInferenceLoop = useCallback(() => {
     if (inferenceLoopRef.current) {
@@ -674,6 +684,24 @@ export default function Home() {
                     <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
                   </svg>
                 </button>
+                <button
+                  className="icon-button compact-icon-button"
+                  type="button"
+                  onClick={toggleInferenceLoop}
+                  disabled={llmState === "loading"}
+                  title={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
+                  aria-label={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
+                >
+                  {loopRunning ? (
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M8 8h8v8H8z" />
+                    </svg>
+                  ) : (
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="m8 5 11 7-11 7V5z" />
+                    </svg>
+                  )}
+                </button>
               </div>
             }
             progress={llmProgress}
@@ -705,18 +733,16 @@ export default function Home() {
 
       <section className="chat-panel">
         <div className="conversation-panel">
-          <div className="chat-log">
+          <div className="chat-log" ref={chatLogRef}>
             {chatMessages.map((message, index) => (
               <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
                 {message.content}
               </div>
             ))}
           </div>
-          <div className="loop-controls">
-            {lastInferenceMs !== null && <span className="loop-timing">Last run {formatDuration(lastInferenceMs)}</span>}
-            <button type="button" onClick={toggleInferenceLoop} disabled={llmState === "loading"}>
-              {loopRunning ? "停止" : "開始"}
-            </button>
+          <div className="conversation-footer">
+            <span>回覆 {responseCount} 次</span>
+            {lastInferenceMs !== null ? <span>最後推論 {formatDuration(lastInferenceMs)}</span> : null}
           </div>
         </div>
       </section>
