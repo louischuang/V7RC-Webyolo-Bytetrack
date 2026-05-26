@@ -155,7 +155,9 @@ Behavior:
 - High-confidence detections start and update tracks.
 - Low-confidence detections can recover unmatched active tracks.
 - Matching uses class-aware IoU association with ByteTrack-style cost threshold semantics.
+- Matching uses a lightweight constant-velocity prediction and center-distance score to reduce ID switches when objects cross.
 - Tracks stay alive for `NEXT_PUBLIC_TRACK_BUFFER_FRAMES` missed detection frames.
+- Lost tracks inside the buffer can be matched again instead of immediately creating a new ID.
 - UI track IDs use `T1`, `T2`, etc.
 
 ## Verification
