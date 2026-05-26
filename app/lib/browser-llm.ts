@@ -99,7 +99,8 @@ export class BrowserLlm {
           model_lib: modelLibUrl,
           required_features: ["shader-f16"],
           overrides: {
-            sliding_window_size: -1,
+            context_window_size: -1,
+            attention_sink_size: 0,
           },
         },
       ],
@@ -122,50 +123,74 @@ export class BrowserLlm {
       throw new Error("Gemma model is not loaded.");
     }
 
+    await this.engine.resetChat(false, this.config.modelId);
+
     const diagnostics = [
       `model=${this.config.modelId}`,
       `messages=${messages.length}`,
       `max_tokens=${this.config.maxNewTokens}`,
+      "resetChat=true",
     ];
+    const candidates: string[] = [];
 
     const chatResponse = (await this.engine.chat.completions.create({
       messages,
       temperature: this.config.temperature,
       max_tokens: this.config.maxNewTokens,
+      extra_body: {
+        enable_thinking: false,
+      },
       stream: false,
     })) as ChatResponse;
     const chatText = chatResponse.choices?.[0]?.message?.content ?? "";
     diagnostics.push(
       `chat_nonstream len=${chatText.length} finish=${chatResponse.choices?.[0]?.finish_reason ?? "unknown"}`,
     );
-    if (chatText.trim()) {
-      return { text: chatText.trim(), diagnostics };
+    const chatCandidate = cleanupGemmaResponse(chatText);
+    if (isUsableCandidate(chatCandidate)) {
+      return { text: chatCandidate, diagnostics };
+    }
+    if (chatCandidate) {
+      candidates.push(chatCandidate);
     }
 
-    const chatStreamText = await this.generateFromChatStream(messages, diagnostics);
-    if (chatStreamText.trim()) {
-      return { text: chatStreamText.trim(), diagnostics };
+    const chatStreamText = cleanupGemmaResponse(await this.generateFromChatStream(messages, diagnostics));
+    if (isUsableCandidate(chatStreamText)) {
+      return { text: chatStreamText, diagnostics };
+    }
+    if (chatStreamText) {
+      candidates.push(chatStreamText);
     }
 
     const lastMessage = await this.engine.getMessage();
     diagnostics.push(`engine_getMessage len=${lastMessage.length}`);
-    if (lastMessage.trim()) {
-      return { text: lastMessage.trim(), diagnostics };
+    const lastMessageCandidate = cleanupGemmaResponse(lastMessage);
+    if (isUsableCandidate(lastMessageCandidate)) {
+      return { text: lastMessageCandidate, diagnostics };
+    }
+    if (lastMessageCandidate) {
+      candidates.push(lastMessageCandidate);
     }
 
     const rawStopText = await this.generateFromRawPrompt(messages, diagnostics, {
       label: "raw_stream_stop",
       stop: ["<turn|>"],
     });
-    if (rawStopText.trim()) {
-      return { text: rawStopText.trim(), diagnostics };
+    if (isUsableCandidate(rawStopText)) {
+      return { text: rawStopText, diagnostics };
+    }
+    if (rawStopText) {
+      candidates.push(rawStopText);
     }
 
     const rawNoStopText = await this.generateFromRawPrompt(messages, diagnostics, {
       label: "raw_stream_nostop",
     });
-    if (rawNoStopText.trim()) {
-      return { text: rawNoStopText.trim(), diagnostics };
+    if (isUsableCandidate(rawNoStopText)) {
+      return { text: rawNoStopText, diagnostics };
+    }
+    if (rawNoStopText) {
+      candidates.push(rawNoStopText);
     }
 
     const rawIgnoreEosText = await this.generateFromRawPrompt(messages, diagnostics, {
@@ -173,8 +198,11 @@ export class BrowserLlm {
       ignoreEos: true,
       maxTokens: Math.min(64, this.config.maxNewTokens),
     });
+    if (rawIgnoreEosText) {
+      candidates.push(rawIgnoreEosText);
+    }
 
-    return { text: rawIgnoreEosText.trim(), diagnostics };
+    return { text: chooseBestCandidate(candidates), diagnostics };
   }
 
   private async generateFromChatStream(messages: BrowserLlmMessage[], diagnostics: string[]) {
@@ -186,6 +214,9 @@ export class BrowserLlm {
       messages,
       temperature: this.config.temperature,
       max_tokens: this.config.maxNewTokens,
+      extra_body: {
+        enable_thinking: false,
+      },
       stream: true,
     });
 
@@ -246,7 +277,7 @@ export class BrowserLlm {
     diagnostics.push(
       `${options.label} chunks=${chunkCount} rawLen=${response.length} cleanLen=${cleaned.length} finish=${
         [...finishReasons].join(",") || "none"
-      }`,
+      } preview=${previewText(response)}`,
     );
     return cleaned;
   }
@@ -277,9 +308,26 @@ function toGemmaPrompt(messages: BrowserLlmMessage[]) {
     })
     .join("");
 
-  return `<bos>${system ? `${system}\n` : ""}${turns}<|turn>model\n`;
+  return `<bos>${system ? `<|turn>system\n${system}<turn|>\n` : ""}${turns}<|turn>model\n<|channel>thought\n<channel|>`;
 }
 
 function cleanupGemmaResponse(response: string) {
-  return response.replace(/<turn\|>[\s\S]*$/u, "").trim();
+  return response
+    .replace(/<turn\|>[\s\S]*$/u, "")
+    .replace(/<think>[\s\S]*?<\/think>/gu, "")
+    .replace(/<\|channel>thought[\s\S]*?<channel\|>/gu, "")
+    .replace(/<eos>/gu, "")
+    .trim();
+}
+
+function isUsableCandidate(response: string) {
+  return response.trim().length >= 16;
+}
+
+function chooseBestCandidate(candidates: string[]) {
+  return [...candidates].sort((left, right) => right.length - left.length)[0] ?? "";
+}
+
+function previewText(response: string) {
+  return JSON.stringify(response.slice(0, 160));
 }

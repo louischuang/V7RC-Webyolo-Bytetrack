@@ -32,7 +32,7 @@ const runtimeDefaults = {
     process.env.NEXT_PUBLIC_LLM_MODEL_LIB_URL ??
     "/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
-  llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.7),
+  llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
   llmRuntime: process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "webllm",
 };
 
@@ -279,7 +279,7 @@ export default function Home() {
 
   const runPrompt = useCallback(async (
     promptValue: string,
-    options?: { includeScene?: boolean; label?: string; isolated?: boolean },
+    options?: { includeScene?: boolean; label?: string; isolated?: boolean; includeInstructions?: boolean },
   ) => {
     const prompt = promptValue.trim();
     if (!prompt || llmState === "loading" || llmState === "generating") {
@@ -297,16 +297,11 @@ export default function Home() {
 
     const shouldIncludeScene = options?.includeScene ?? includeFrame;
     const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
-    const userMessage = sceneSummary ? `${prompt}\n\nCurrent tracked scene:\n${sceneSummary}` : prompt;
+    const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, options?.includeInstructions ?? true);
     const history = options?.isolated
       ? []
       : chatMessages.filter((message) => message.role !== "system" && shouldSendChatHistory(message));
     const nextMessages: BrowserLlmMessage[] = [
-      {
-        role: "system",
-        content:
-          "You are a concise local vision assistant. Use the tracked scene summary when provided. Do not claim to see raw pixels unless an image is explicitly provided.",
-      },
       ...history,
       { role: "user", content: userMessage },
     ];
@@ -318,14 +313,18 @@ export default function Home() {
 
     try {
       const generation = await llmRef.current.generate(nextMessages);
-      const emptyResponse = !generation.text.trim();
+      const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
+      const shouldShowDiagnostics = emptyResponse && Boolean(options?.label) && generation.diagnostics.length > 0;
+      const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
       setChatMessages((messages) => [
         ...messages,
         {
           role: "assistant",
           content: emptyResponse
-            ? `The local model returned an empty response.\n\nDiagnostics:\n${generation.diagnostics.join("\n")}`
-            : generation.text,
+            ? fallbackResponse
+            : shouldShowDiagnostics
+              ? `${generation.text}\n\nDiagnostics:\n${generation.diagnostics.join("\n")}`
+              : generation.text,
         },
       ]);
       setLlmState("ready");
@@ -563,10 +562,11 @@ export default function Home() {
             className="secondary-button"
             type="button"
             onClick={() =>
-              void runPrompt("Reply with exactly this sentence: Gemma local test OK.", {
+              void runPrompt("Output only this sentence: Gemma local test OK.", {
                 includeScene: false,
                 label: "[Test Prompt 1]",
                 isolated: true,
+                includeInstructions: false,
               })
             }
             disabled={llmState === "loading" || llmState === "generating"}
@@ -629,6 +629,31 @@ function buildSceneSummary(tracks: Track[]) {
     .slice(0, 12)
     .map((track) => `${track.id}: ${track.label}, confidence ${track.confidence.toFixed(2)}`)
     .join("\n");
+}
+
+function buildGemmaUserPrompt(prompt: string, sceneSummary: string, includeInstructions: boolean) {
+  const instructions =
+    "You are a concise local vision assistant. Use the tracked scene summary when provided. Do not claim to see raw pixels unless an image is explicitly provided.";
+  const basePrompt = includeInstructions ? `${instructions}\n\n${prompt}` : prompt;
+
+  if (!sceneSummary) {
+    return basePrompt;
+  }
+
+  return `${basePrompt}\n\nCurrent tracked scene:\n${sceneSummary}`;
+}
+
+function buildLocalFallbackResponse(sceneSummary: string, diagnostics: string[]) {
+  const sceneLine = sceneSummary
+    ? `Local scene summary: ${sceneSummary.replace(/\n/gu, " ")}`
+    : "Local scene summary: no scene summary was attached to this prompt.";
+
+  return `Gemma generated only control tokens for this request. ${sceneLine}\n\nDiagnostics:\n${diagnostics.join("\n")}`;
+}
+
+function isDegenerateLlmResponse(response: string) {
+  const text = response.trim();
+  return text.length > 0 && text.length < 8 && !/[a-z0-9\u4e00-\u9fff]/iu.test(text);
 }
 
 function shouldSendChatHistory(message: BrowserLlmMessage) {
