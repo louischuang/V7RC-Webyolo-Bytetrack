@@ -277,7 +277,10 @@ export default function Home() {
     }
   }, []);
 
-  const runPrompt = useCallback(async (promptValue: string, options?: { includeScene?: boolean; label?: string }) => {
+  const runPrompt = useCallback(async (
+    promptValue: string,
+    options?: { includeScene?: boolean; label?: string; isolated?: boolean },
+  ) => {
     const prompt = promptValue.trim();
     if (!prompt || llmState === "loading" || llmState === "generating") {
       return;
@@ -295,13 +298,16 @@ export default function Home() {
     const shouldIncludeScene = options?.includeScene ?? includeFrame;
     const sceneSummary = shouldIncludeScene ? buildSceneSummary(tracksRef.current) : "";
     const userMessage = sceneSummary ? `${prompt}\n\nCurrent tracked scene:\n${sceneSummary}` : prompt;
+    const history = options?.isolated
+      ? []
+      : chatMessages.filter((message) => message.role !== "system" && shouldSendChatHistory(message));
     const nextMessages: BrowserLlmMessage[] = [
       {
         role: "system",
         content:
           "You are a concise local vision assistant. Use the tracked scene summary when provided. Do not claim to see raw pixels unless an image is explicitly provided.",
       },
-      ...chatMessages.filter((message) => message.role !== "system"),
+      ...history,
       { role: "user", content: userMessage },
     ];
 
@@ -311,12 +317,15 @@ export default function Home() {
     setLlmDetail("Generating response locally...");
 
     try {
-      const response = await llmRef.current.generate(nextMessages);
+      const generation = await llmRef.current.generate(nextMessages);
+      const emptyResponse = !generation.text.trim();
       setChatMessages((messages) => [
         ...messages,
         {
           role: "assistant",
-          content: response || "The local model returned an empty response.",
+          content: emptyResponse
+            ? `The local model returned an empty response.\n\nDiagnostics:\n${generation.diagnostics.join("\n")}`
+            : generation.text,
         },
       ]);
       setLlmState("ready");
@@ -557,6 +566,7 @@ export default function Home() {
               void runPrompt("Reply with exactly this sentence: Gemma local test OK.", {
                 includeScene: false,
                 label: "[Test Prompt 1]",
+                isolated: true,
               })
             }
             disabled={llmState === "loading" || llmState === "generating"}
@@ -572,6 +582,7 @@ export default function Home() {
                 {
                   includeScene: true,
                   label: "[Test Prompt 2]",
+                  isolated: true,
                 },
               )
             }
@@ -618,6 +629,18 @@ function buildSceneSummary(tracks: Track[]) {
     .slice(0, 12)
     .map((track) => `${track.id}: ${track.label}, confidence ${track.confidence.toFixed(2)}`)
     .join("\n");
+}
+
+function shouldSendChatHistory(message: BrowserLlmMessage) {
+  if (message.role === "assistant") {
+    return (
+      !message.content.startsWith("Gemma4-E2B is not loaded yet.") &&
+      !message.content.startsWith("Load Gemma4-E2B first") &&
+      !message.content.startsWith("The local model returned an empty response.")
+    );
+  }
+
+  return true;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

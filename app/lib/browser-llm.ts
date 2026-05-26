@@ -13,6 +13,11 @@ export type BrowserLlmConfig = {
   temperature: number;
 };
 
+export type BrowserLlmGeneration = {
+  text: string;
+  diagnostics: string[];
+};
+
 type WebLlmModule = typeof import("@mlc-ai/web-llm");
 type MlcEngine = Awaited<ReturnType<WebLlmModule["CreateMLCEngine"]>>;
 type AppConfig = import("@mlc-ai/web-llm").AppConfig;
@@ -21,6 +26,15 @@ type ChatChunk = {
     delta?: {
       content?: string;
     };
+    finish_reason?: string | null;
+  }>;
+};
+type ChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+    finish_reason?: string | null;
   }>;
 };
 type WebGpuNavigator = Navigator & {
@@ -108,6 +122,66 @@ export class BrowserLlm {
       throw new Error("Gemma model is not loaded.");
     }
 
+    const diagnostics = [
+      `model=${this.config.modelId}`,
+      `messages=${messages.length}`,
+      `max_tokens=${this.config.maxNewTokens}`,
+    ];
+
+    const chatResponse = (await this.engine.chat.completions.create({
+      messages,
+      temperature: this.config.temperature,
+      max_tokens: this.config.maxNewTokens,
+      stream: false,
+    })) as ChatResponse;
+    const chatText = chatResponse.choices?.[0]?.message?.content ?? "";
+    diagnostics.push(
+      `chat_nonstream len=${chatText.length} finish=${chatResponse.choices?.[0]?.finish_reason ?? "unknown"}`,
+    );
+    if (chatText.trim()) {
+      return { text: chatText.trim(), diagnostics };
+    }
+
+    const chatStreamText = await this.generateFromChatStream(messages, diagnostics);
+    if (chatStreamText.trim()) {
+      return { text: chatStreamText.trim(), diagnostics };
+    }
+
+    const lastMessage = await this.engine.getMessage();
+    diagnostics.push(`engine_getMessage len=${lastMessage.length}`);
+    if (lastMessage.trim()) {
+      return { text: lastMessage.trim(), diagnostics };
+    }
+
+    const rawStopText = await this.generateFromRawPrompt(messages, diagnostics, {
+      label: "raw_stream_stop",
+      stop: ["<turn|>"],
+    });
+    if (rawStopText.trim()) {
+      return { text: rawStopText.trim(), diagnostics };
+    }
+
+    const rawNoStopText = await this.generateFromRawPrompt(messages, diagnostics, {
+      label: "raw_stream_nostop",
+    });
+    if (rawNoStopText.trim()) {
+      return { text: rawNoStopText.trim(), diagnostics };
+    }
+
+    const rawIgnoreEosText = await this.generateFromRawPrompt(messages, diagnostics, {
+      label: "raw_stream_ignore_eos",
+      ignoreEos: true,
+      maxTokens: Math.min(64, this.config.maxNewTokens),
+    });
+
+    return { text: rawIgnoreEosText.trim(), diagnostics };
+  }
+
+  private async generateFromChatStream(messages: BrowserLlmMessage[], diagnostics: string[]) {
+    if (!this.engine) {
+      throw new Error("Gemma model is not loaded.");
+    }
+
     const chunks = await this.engine.chat.completions.create({
       messages,
       temperature: this.config.temperature,
@@ -116,24 +190,30 @@ export class BrowserLlm {
     });
 
     let response = "";
+    let chunkCount = 0;
+    const finishReasons = new Set<string>();
     if (isAsyncIterable(chunks)) {
       for await (const chunk of chunks as AsyncIterable<ChatChunk>) {
+        chunkCount += 1;
         response += chunk.choices?.[0]?.delta?.content ?? "";
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+        if (finishReason) {
+          finishReasons.add(finishReason);
+        }
       }
     }
 
-    if (!response.trim()) {
-      response = await this.engine.getMessage();
-    }
-
-    if (!response.trim()) {
-      response = await this.generateFromRawPrompt(messages);
-    }
-
+    diagnostics.push(
+      `chat_stream chunks=${chunkCount} len=${response.length} finish=${[...finishReasons].join(",") || "none"}`,
+    );
     return response.trim();
   }
 
-  private async generateFromRawPrompt(messages: BrowserLlmMessage[]) {
+  private async generateFromRawPrompt(
+    messages: BrowserLlmMessage[],
+    diagnostics: string[],
+    options: { label: string; stop?: string[]; ignoreEos?: boolean; maxTokens?: number },
+  ) {
     if (!this.engine) {
       throw new Error("Gemma model is not loaded.");
     }
@@ -142,19 +222,33 @@ export class BrowserLlm {
     const chunks = await this.engine.completions.create({
       prompt,
       temperature: this.config.temperature,
-      max_tokens: this.config.maxNewTokens,
+      max_tokens: options.maxTokens ?? this.config.maxNewTokens,
       stream: true,
-      stop: ["<turn|>"],
+      stop: options.stop,
+      ignore_eos: options.ignoreEos,
     });
 
     let response = "";
+    let chunkCount = 0;
+    const finishReasons = new Set<string>();
     if (isAsyncIterable(chunks)) {
       for await (const chunk of chunks as AsyncIterable<CompletionChunk>) {
+        chunkCount += 1;
         response += chunk.choices?.[0]?.text ?? "";
+        const finishReason = chunk.choices?.[0]?.finish_reason;
+        if (finishReason) {
+          finishReasons.add(finishReason);
+        }
       }
     }
 
-    return cleanupGemmaResponse(response);
+    const cleaned = cleanupGemmaResponse(response);
+    diagnostics.push(
+      `${options.label} chunks=${chunkCount} rawLen=${response.length} cleanLen=${cleaned.length} finish=${
+        [...finishReasons].join(",") || "none"
+      }`,
+    );
+    return cleaned;
   }
 }
 
@@ -169,6 +263,7 @@ function toAbsoluteUrl(url: string) {
 type CompletionChunk = {
   choices?: Array<{
     text?: string;
+    finish_reason?: string | null;
   }>;
 };
 
