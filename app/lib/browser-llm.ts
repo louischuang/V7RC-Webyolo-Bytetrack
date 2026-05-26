@@ -126,7 +126,35 @@ export class BrowserLlm {
       response = await this.engine.getMessage();
     }
 
+    if (!response.trim()) {
+      response = await this.generateFromRawPrompt(messages);
+    }
+
     return response.trim();
+  }
+
+  private async generateFromRawPrompt(messages: BrowserLlmMessage[]) {
+    if (!this.engine) {
+      throw new Error("Gemma model is not loaded.");
+    }
+
+    const prompt = toGemmaPrompt(messages);
+    const chunks = await this.engine.completions.create({
+      prompt,
+      temperature: this.config.temperature,
+      max_tokens: this.config.maxNewTokens,
+      stream: true,
+      stop: ["<turn|>"],
+    });
+
+    let response = "";
+    if (isAsyncIterable(chunks)) {
+      for await (const chunk of chunks as AsyncIterable<CompletionChunk>) {
+        response += chunk.choices?.[0]?.text ?? "";
+      }
+    }
+
+    return cleanupGemmaResponse(response);
   }
 }
 
@@ -136,4 +164,27 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
 
 function toAbsoluteUrl(url: string) {
   return new URL(url, window.location.origin).href;
+}
+
+type CompletionChunk = {
+  choices?: Array<{
+    text?: string;
+  }>;
+};
+
+function toGemmaPrompt(messages: BrowserLlmMessage[]) {
+  const system = messages.find((message) => message.role === "system")?.content.trim();
+  const turns = messages
+    .filter((message) => message.role !== "system")
+    .map((message) => {
+      const role = message.role === "assistant" ? "model" : "user";
+      return `<|turn>${role}\n${message.content.trim()}<turn|>\n`;
+    })
+    .join("");
+
+  return `<bos>${system ? `${system}\n` : ""}${turns}<|turn>model\n`;
+}
+
+function cleanupGemmaResponse(response: string) {
+  return response.replace(/<turn\|>[\s\S]*$/u, "").trim();
 }
