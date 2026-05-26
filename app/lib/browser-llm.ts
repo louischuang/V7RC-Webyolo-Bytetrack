@@ -16,6 +16,13 @@ export type BrowserLlmConfig = {
 type WebLlmModule = typeof import("@mlc-ai/web-llm");
 type MlcEngine = Awaited<ReturnType<WebLlmModule["CreateMLCEngine"]>>;
 type AppConfig = import("@mlc-ai/web-llm").AppConfig;
+type ChatChunk = {
+  choices?: Array<{
+    delta?: {
+      content?: string;
+    };
+  }>;
+};
 type WebGpuNavigator = Navigator & {
   gpu?: {
     requestAdapter: () => Promise<{
@@ -99,17 +106,28 @@ export class BrowserLlm {
       throw new Error("Gemma model is not loaded.");
     }
 
-    const reply = await this.engine.chat.completions.create({
+    const chunks = await this.engine.chat.completions.create({
       messages,
       temperature: this.config.temperature,
       max_tokens: this.config.maxNewTokens,
+      stream: true,
     });
 
-    const content = reply.choices[0]?.message.content;
-    if (typeof content === "string") {
-      return content;
+    let response = "";
+    if (isAsyncIterable(chunks)) {
+      for await (const chunk of chunks as AsyncIterable<ChatChunk>) {
+        response += chunk.choices?.[0]?.delta?.content ?? "";
+      }
     }
 
-    return "";
+    if (!response.trim()) {
+      response = await this.engine.getMessage();
+    }
+
+    return response.trim();
   }
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 }
