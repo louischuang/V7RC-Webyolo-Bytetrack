@@ -86,12 +86,7 @@ export default function Home() {
   const [mirrorPreview, setMirrorPreview] = useState(true);
   const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
   const [fixedPrompt, setFixedPrompt] = useState(defaultFixedPrompt);
-  const [chatMessages, setChatMessages] = useState<BrowserLlmMessage[]>([
-    {
-      role: "assistant",
-      content: "Gemma4-E2B is not loaded yet. Load the browser model to start the perception loop.",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<BrowserLlmMessage[]>([]);
   const [llmState, setLlmState] = useState<BrowserLlmStatus>("checking");
   const [llmDetail, setLlmDetail] = useState("Checking WebGPU support...");
   const [llmProgress, setLlmProgress] = useState<number | null>(null);
