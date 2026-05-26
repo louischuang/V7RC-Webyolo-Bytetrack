@@ -7,6 +7,8 @@ The first gateway MVP is implemented under `stream-gateway/` and wired into `doc
 Implemented now:
 
 - `POST /api/streams` creates a stream session.
+- `GET /api/streams` lists active stream sessions.
+- `GET /api/streams/{id}` returns session status, client count, masked input URL, and recent logs.
 - `DELETE /api/streams/{id}` stops a session.
 - `GET /health` reports gateway health.
 - `GET /streams/{id}.mjpg` starts an ffmpeg MJPG response for that session.
@@ -14,13 +16,14 @@ Implemented now:
 - RTSP inputs use ffmpeg with TCP transport.
 - YouTube inputs are resolved with `yt-dlp -g`, then sent to ffmpeg.
 - The frontend calls the gateway for RTSP and YouTube modes and uses the returned MJPG URL.
+- The frontend polls active gateway session status and displays client/log/error details under the source URL field.
 
 Still planned:
 
 - HLS player integration in the frontend.
 - Authentication/allowlists before untrusted network deployment.
 - WebRTC mode for low-latency robot control.
-- Runtime UI for gateway session health and conversion logs.
+- Rich runtime UI for gateway conversion logs beyond the compact status line.
 
 ## Goal
 
@@ -107,6 +110,32 @@ Stop stream:
 
 ```http
 DELETE /api/streams/robot-front
+```
+
+Read stream status:
+
+```http
+GET /api/streams/robot-front
+```
+
+Response:
+
+```json
+{
+  "id": "robot-front",
+  "sourceType": "rtsp",
+  "output": "mjpg",
+  "status": "running",
+  "clients": 1,
+  "inputUrl": "rtsp://***:***@robot.local/live",
+  "logs": [
+    {
+      "at": "2026-05-27T10:00:00.000Z",
+      "message": "ffmpeg diagnostic line"
+    }
+  ],
+  "lastError": "ffmpeg diagnostic line"
+}
 ```
 
 Health:

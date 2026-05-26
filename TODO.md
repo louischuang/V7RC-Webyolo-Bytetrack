@@ -54,6 +54,8 @@
 - [x] Add stream lifecycle cleanup for stopped or stale sessions.
 - [x] Add healthcheck endpoint for the gateway.
 - [x] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
+- [x] Add gateway session status endpoint with masked input URL and recent logs.
+- [x] Poll active gateway session status from the frontend.
 - [ ] Document that WebRTC is the later low-latency path for robot closed-loop control.
 - [ ] Benchmark RTSP->MJPG latency and CPU load.
 - [ ] Benchmark RTSP->HLS latency and CPU load.

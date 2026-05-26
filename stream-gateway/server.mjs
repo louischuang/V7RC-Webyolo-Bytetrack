@@ -36,6 +36,22 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/streams") {
+      sendJson(response, 200, { streams: [...sessions.values()].map(serializeSession) });
+      return;
+    }
+
+    const getMatch = url.pathname.match(/^\/api\/streams\/([^/]+)$/u);
+    if (request.method === "GET" && getMatch) {
+      const session = sessions.get(getMatch[1]);
+      if (!session) {
+        sendJson(response, 404, { error: "Unknown stream id." });
+        return;
+      }
+      sendJson(response, 200, serializeSession(session));
+      return;
+    }
+
     const deleteMatch = url.pathname.match(/^\/api\/streams\/([^/]+)$/u);
     if (request.method === "DELETE" && deleteMatch) {
       stopStream(deleteMatch[1]);
@@ -85,11 +101,17 @@ async function createStream(body, request) {
     output,
     dir: sessionDir,
     process: null,
+    clients: 0,
+    status: "ready",
+    logs: [],
+    lastError: "",
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
   sessions.set(id, session);
 
   if (output === "hls") {
+    session.status = "starting";
     session.process = startHls(session);
   }
 
@@ -170,11 +192,16 @@ function startHls(session) {
   ];
   const child = spawnFfmpeg(args);
   child.stderr.on("data", (chunk) => {
-    console.warn(`[${session.id}] ffmpeg: ${chunk.toString().trim()}`);
+    appendLog(session, chunk.toString());
   });
+  session.status = "running";
+  session.updatedAt = new Date().toISOString();
   child.on("exit", () => {
-    if (sessions.get(session.id)?.process === child) {
-      sessions.get(session.id).process = null;
+    const current = sessions.get(session.id);
+    if (current?.process === child) {
+      current.process = null;
+      current.status = "stopped";
+      current.updatedAt = new Date().toISOString();
     }
   });
   return child;
@@ -199,6 +226,9 @@ function streamMjpg(id, response) {
     "pipe:1",
   ];
   const child = spawnFfmpeg(args);
+  session.clients += 1;
+  session.status = "running";
+  session.updatedAt = new Date().toISOString();
 
   response.writeHead(200, {
     "Access-Control-Allow-Origin": "*",
@@ -209,13 +239,19 @@ function streamMjpg(id, response) {
 
   child.stdout.pipe(response);
   child.stderr.on("data", (chunk) => {
-    console.warn(`[${id}] ffmpeg: ${chunk.toString().trim()}`);
+    appendLog(session, chunk.toString());
   });
   child.on("exit", () => {
     response.end();
   });
   response.on("close", () => {
     child.kill("SIGTERM");
+    const current = sessions.get(id);
+    if (current) {
+      current.clients = Math.max(0, current.clients - 1);
+      current.status = current.clients > 0 ? "running" : "ready";
+      current.updatedAt = new Date().toISOString();
+    }
   });
 }
 
@@ -250,6 +286,56 @@ function stopStream(id) {
   session.process?.kill("SIGTERM");
   sessions.delete(id);
   rmSync(session.dir, { recursive: true, force: true });
+}
+
+function serializeSession(session) {
+  return {
+    id: session.id,
+    sourceType: session.sourceType,
+    output: session.output,
+    status: session.status,
+    clients: session.clients,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    inputUrl: maskUrl(session.inputUrl),
+    logs: session.logs.slice(-10),
+    lastError: session.lastError,
+  };
+}
+
+function appendLog(session, text) {
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return;
+  }
+
+  for (const line of lines) {
+    console.warn(`[${session.id}] ffmpeg: ${line}`);
+    session.logs.push({
+      at: new Date().toISOString(),
+      message: line,
+    });
+    session.lastError = line;
+  }
+  session.logs = session.logs.slice(-50);
+  session.updatedAt = new Date().toISOString();
+}
+
+function maskUrl(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password) {
+      parsed.username = parsed.username ? "***" : "";
+      parsed.password = parsed.password ? "***" : "";
+    }
+    return parsed.href;
+  } catch {
+    return "";
+  }
 }
 
 function inputArgs(url) {

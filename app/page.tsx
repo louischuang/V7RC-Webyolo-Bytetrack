@@ -16,6 +16,15 @@ type GatewayStreamResponse = {
   url: string;
 };
 
+type GatewaySessionStatus = {
+  id: string;
+  output: "mjpg" | "hls";
+  status: string;
+  clients: number;
+  lastError?: string;
+  logs?: Array<{ at: string; message: string }>;
+};
+
 type GatewayStatus = "idle" | "checking" | "ready" | "connecting" | "streaming" | "error";
 
 type RuntimeStatus = {
@@ -110,6 +119,7 @@ export default function Home() {
     rtsp: "",
     youtube: "",
   });
+  const [gatewayStreamId, setGatewayStreamId] = useState<string>("");
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>("idle");
   const [gatewayDetail, setGatewayDetail] = useState("");
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -238,6 +248,7 @@ export default function Home() {
       void stopGatewayStream(gatewayStreamIdRef.current);
       gatewayStreamIdRef.current = null;
     }
+    setGatewayStreamId("");
     setGatewayStatus("idle");
     setGatewayDetail("");
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -293,6 +304,7 @@ export default function Home() {
         setGatewayDetail("Requesting stream gateway conversion...");
         const gatewayStream = await createGatewayStream(sourceMode, url);
         gatewayStreamIdRef.current = gatewayStream.id;
+        setGatewayStreamId(gatewayStream.id);
         setGatewayStatus("streaming");
         setGatewayDetail(`Gateway ${gatewayStream.output.toUpperCase()} stream ${gatewayStream.id}`);
         if (gatewayStream.output === "mjpg") {
@@ -646,6 +658,48 @@ export default function Home() {
       setGatewayDetail("");
     });
   }, [checkGatewayHealth, sourceMode]);
+
+  useEffect(() => {
+    if (!gatewayStreamId || (sourceMode !== "rtsp" && sourceMode !== "youtube")) {
+      return;
+    }
+
+    let cancelled = false;
+    const updateGatewaySession = async () => {
+      try {
+        const session = await getGatewayStreamStatus(gatewayStreamId);
+        if (cancelled) {
+          return;
+        }
+
+        const lastLog = session.lastError || session.logs?.at(-1)?.message || "";
+        setGatewayStatus(session.status === "running" || session.status === "ready" ? "streaming" : "connecting");
+        setGatewayDetail(
+          lastLog
+            ? `Gateway ${session.output.toUpperCase()} ${session.status}, clients ${session.clients}: ${lastLog}`
+            : `Gateway ${session.output.toUpperCase()} ${session.status}, clients ${session.clients}`,
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Could not read gateway stream status.";
+        setGatewayStatus("error");
+        setGatewayDetail(message);
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      void updateGatewaySession();
+    }, 2000);
+    void updateGatewaySession();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [gatewayStreamId, sourceMode]);
 
   useEffect(() => {
     const detect = async () => {
@@ -1140,6 +1194,29 @@ async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string):
     output: payload.output === "hls" ? "hls" : "mjpg",
     status: payload.status || "ready",
     url: payload.url,
+  };
+}
+
+async function getGatewayStreamStatus(id: string): Promise<GatewaySessionStatus> {
+  const response = await fetch(
+    `${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/api/streams/${encodeURIComponent(id)}`,
+    {
+      cache: "no-store",
+    },
+  );
+  const payload = (await response.json().catch(() => null)) as Partial<GatewaySessionStatus> & { error?: string } | null;
+
+  if (!response.ok || !payload?.id) {
+    throw new Error(payload?.error || `Stream gateway status returned ${response.status}.`);
+  }
+
+  return {
+    id: payload.id,
+    output: payload.output === "hls" ? "hls" : "mjpg",
+    status: payload.status || "unknown",
+    clients: typeof payload.clients === "number" ? payload.clients : 0,
+    lastError: payload.lastError,
+    logs: payload.logs,
   };
 }
 
