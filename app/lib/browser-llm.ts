@@ -75,12 +75,14 @@ export class BrowserLlm {
 
   async load(onProgress: (progress: LoadProgress) => void) {
     const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
+    const modelUrl = toAbsoluteUrl(this.config.modelUrl);
+    const modelLibUrl = toAbsoluteUrl(this.config.modelLibUrl);
     const appConfig: AppConfig = {
       model_list: [
         {
-          model: this.config.modelUrl,
+          model: modelUrl,
           model_id: this.config.modelId,
-          model_lib: this.config.modelLibUrl,
+          model_lib: modelLibUrl,
           required_features: ["shader-f16"],
           overrides: {
             sliding_window_size: -1,
@@ -130,4 +132,8 @@ export class BrowserLlm {
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
+}
+
+function toAbsoluteUrl(url: string) {
+  return new URL(url, window.location.origin).href;
 }
