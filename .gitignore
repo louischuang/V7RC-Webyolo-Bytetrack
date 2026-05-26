@@ -12,6 +12,7 @@ coverage/
 .model-export/
 public/models/**/*.onnx
 public/models/gemma4-e2b-it
+public/models/gemma4-e2b-it-onnx
 *.log
 *.tsbuildinfo
 tsconfig.tsbuildinfo
