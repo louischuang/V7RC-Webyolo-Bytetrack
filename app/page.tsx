@@ -643,6 +643,14 @@ export default function Home() {
             action={
               <div className="status-actions">
                 <button
+                  className="secondary-button compact-button"
+                  type="button"
+                  onClick={loadGemma}
+                  disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
+                >
+                  {llmState === "ready" ? "Loaded" : "Load"}
+                </button>
+                <button
                   className="icon-button compact-icon-button"
                   type="button"
                   onClick={() => setSettingsOpen(true)}
@@ -653,14 +661,6 @@ export default function Home() {
                     <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
                     <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
                   </svg>
-                </button>
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={loadGemma}
-                  disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
-                >
-                  {llmState === "ready" ? "Loaded" : "Load"}
                 </button>
               </div>
             }
