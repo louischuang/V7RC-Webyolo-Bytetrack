@@ -1044,34 +1044,52 @@ export default function Home() {
       </header>
 
       <section className="workspace">
-        <div className="camera-panel">
-          <div className="video-stage">
-            <video
-              className={sourceSurface === "image" ? "hidden-source" : sourceMode === "camera" && mirrorPreview ? "mirrored" : undefined}
-              ref={videoRef}
-              muted
-              playsInline
-            />
-            {/* eslint-disable-next-line @next/next/no-img-element -- MJPG streams need a raw img surface. */}
-            <img
-              alt=""
-              className={sourceSurface === "image" ? undefined : "hidden-source"}
-              ref={imageRef}
-              onError={() => {
-                if (sourceSurface === "image") {
-                  setCameraError("Could not load image stream.");
-                  setCameraState("error");
-                }
-              }}
-            />
-            <canvas ref={canvasRef} aria-hidden="true" />
-            {cameraState !== "streaming" ? (
-              <div className="stage-empty">
-                <strong>{cameraState === "requesting" ? `Requesting ${sourceMode}` : `${sourceMode.toUpperCase()} idle`}</strong>
-                <span>{cameraError || "Select a source and start the local pipeline."}</span>
-              </div>
-            ) : null}
+        <div className="main-panel">
+          <div className="camera-panel">
+            <div className="video-stage">
+              <video
+                className={sourceSurface === "image" ? "hidden-source" : sourceMode === "camera" && mirrorPreview ? "mirrored" : undefined}
+                ref={videoRef}
+                muted
+                playsInline
+              />
+              {/* eslint-disable-next-line @next/next/no-img-element -- MJPG streams need a raw img surface. */}
+              <img
+                alt=""
+                className={sourceSurface === "image" ? undefined : "hidden-source"}
+                ref={imageRef}
+                onError={() => {
+                  if (sourceSurface === "image") {
+                    setCameraError("Could not load image stream.");
+                    setCameraState("error");
+                  }
+                }}
+              />
+              <canvas ref={canvasRef} aria-hidden="true" />
+              {cameraState !== "streaming" ? (
+                <div className="stage-empty">
+                  <strong>{cameraState === "requesting" ? `Requesting ${sourceMode}` : `${sourceMode.toUpperCase()} idle`}</strong>
+                  <span>{cameraError || "Select a source and start the local pipeline."}</span>
+                </div>
+              ) : null}
+            </div>
           </div>
+
+          <section className="chat-panel">
+            <div className="conversation-panel">
+              <div className="chat-log" ref={chatLogRef}>
+                {chatMessages.map((message, index) => (
+                  <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
+                    {message.content}
+                  </div>
+                ))}
+              </div>
+              <div className="conversation-footer">
+                <span>回覆 {responseCount} 次</span>
+                {lastInferenceMs !== null ? <span>最後推論 {formatDuration(lastInferenceMs)}</span> : null}
+              </div>
+            </div>
+          </section>
         </div>
 
         <aside className="side-panel">
@@ -1267,22 +1285,6 @@ export default function Home() {
             )}
           </div>
         </aside>
-      </section>
-
-      <section className="chat-panel">
-        <div className="conversation-panel">
-          <div className="chat-log" ref={chatLogRef}>
-            {chatMessages.map((message, index) => (
-              <div className={`message ${message.role}-message`} key={`${message.role}-${index}`}>
-                {message.content}
-              </div>
-            ))}
-          </div>
-          <div className="conversation-footer">
-            <span>回覆 {responseCount} 次</span>
-            {lastInferenceMs !== null ? <span>最後推論 {formatDuration(lastInferenceMs)}</span> : null}
-          </div>
-        </div>
       </section>
 
       {cameraSettingsOpen ? (
