@@ -81,16 +81,16 @@ MVP behavior:
 
 - `Camera`: use `getUserMedia()` and the selected Chrome `videoinput`.
 - `MJPG`: accept a direct MJPG URL and render it through an `<img>` stream surface.
-- `RTSP`: accept a URL field, but production usage should point to a gateway-converted browser URL such as HLS, MJPG, or WebRTC.
-- `YouTube`: accept a URL field, but production usage should point to a gateway-converted browser URL, not a regular watch page.
+- `RTSP`: accept a URL field and use the stream gateway to expose a browser-readable HLS URL.
+- `YouTube`: accept a watch/share URL and use the stream gateway to expose selectable MP4 or HLS output, not the regular watch page.
 
 Recommended stream-gateway MVP:
 
 - Add a `stream-gateway` Docker service next to `web`.
 - Use ffmpeg or MediaMTX first because they are proven and simple to deploy.
-- Convert RTSP to MJPG for fastest integration or HLS for lower bandwidth.
-- Convert YouTube through `yt-dlp` plus ffmpeg into HLS/MJPG when allowed by the source and deployment policy.
-- Expose generated streams under stable local URLs such as `/streams/{id}.mjpg` or `/streams/{id}/index.m3u8`.
+- Convert RTSP to HLS for browser playback now, with WebRTC reserved for lower-latency robot control.
+- Convert YouTube through `yt-dlp` plus ffmpeg into MP4 or HLS when allowed by the source and deployment policy.
+- Expose generated streams under stable local URLs such as `/streams/{id}.mjpg`, `/streams/{id}/index.m3u8`, or `/streams/{id}.mp4`.
 - Keep YOLO, ByteTrack, and Gemma inference in Chrome; the gateway only normalizes video transport.
 
 Long-term low-latency option:

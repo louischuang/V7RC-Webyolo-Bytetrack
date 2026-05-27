@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type Hls from "hls.js";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
 import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo";
@@ -8,17 +9,19 @@ import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo"
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
 type SourceMode = "camera" | "mjpg" | "rtsp" | "youtube";
 type SourceSurface = "video" | "image";
+type GatewayOutput = "mjpg" | "hls" | "mp4";
+type YoutubeOutput = "hls" | "mp4";
 
 type GatewayStreamResponse = {
   id: string;
-  output: "mjpg" | "hls";
+  output: GatewayOutput;
   status: string;
   url: string;
 };
 
 type GatewaySessionStatus = {
   id: string;
-  output: "mjpg" | "hls";
+  output: GatewayOutput;
   status: string;
   clients: number;
   lastError?: string;
@@ -97,6 +100,7 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const detectorRef = useRef<YoloDetector | null>(null);
   const llmRef = useRef<BrowserLlm | null>(null);
   const trackerRef = useRef<ByteTracker>(
@@ -123,6 +127,7 @@ export default function Home() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [sourceMode, setSourceMode] = useState<SourceMode>("camera");
   const [sourceSurface, setSourceSurface] = useState<SourceSurface>("video");
+  const [youtubeOutput, setYoutubeOutput] = useState<YoutubeOutput>("mp4");
   const [streamUrls, setStreamUrls] = useState<Record<Exclude<SourceMode, "camera">, string>>({
     mjpg: "",
     rtsp: "",
@@ -257,6 +262,8 @@ export default function Home() {
       void stopGatewayStream(gatewayStreamIdRef.current);
       gatewayStreamIdRef.current = null;
     }
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
     setGatewayStreamId("");
     setGatewayStatus("idle");
     setGatewayDetail("");
@@ -279,7 +286,11 @@ export default function Home() {
     setFps(0);
   }, []);
 
-  const startUrlSourceWith = useCallback(async (mode: Exclude<SourceMode, "camera">, sourceUrl: string) => {
+  const startUrlSourceWith = useCallback(async (
+    mode: Exclude<SourceMode, "camera">,
+    sourceUrl: string,
+    outputOverride?: YoutubeOutput,
+  ) => {
     const url = sourceUrl.trim();
     if (!url) {
       setCameraError(`${mode.toUpperCase()} URL is required.`);
@@ -307,7 +318,8 @@ export default function Home() {
       if (mode === "rtsp" || mode === "youtube") {
         setGatewayStatus("connecting");
         setGatewayDetail("Requesting stream gateway conversion...");
-        const gatewayStream = await createGatewayStream(mode, url);
+        const gatewayOutput: GatewayOutput = mode === "youtube" ? outputOverride ?? youtubeOutput : "hls";
+        const gatewayStream = await createGatewayStream(mode, url, gatewayOutput);
         gatewayStreamIdRef.current = gatewayStream.id;
         setGatewayStreamId(gatewayStream.id);
         setGatewayStatus("streaming");
@@ -323,7 +335,14 @@ export default function Home() {
           return;
         }
 
-        await startVideoUrl(gatewayStream.url, videoRef.current);
+        if (gatewayStream.output === "hls") {
+          await waitForHlsManifest(gatewayStream.url);
+          await startHlsVideoUrl(gatewayStream.url, videoRef.current, (hls) => {
+            hlsRef.current = hls;
+          });
+        } else {
+          await startVideoUrl(gatewayStream.url, videoRef.current);
+        }
         setSourceSurface("video");
         setCameraState("streaming");
         return;
@@ -341,7 +360,7 @@ export default function Home() {
       }
       setCameraState("error");
     }
-  }, [stopCamera]);
+  }, [stopCamera, youtubeOutput]);
 
   const startUrlSource = useCallback(async () => {
     if (sourceMode === "camera") {
@@ -656,16 +675,20 @@ export default function Home() {
     }
 
     const deepLinkUrl = params.get("url") || "";
+    const deepLinkOutput = parseYoutubeOutput(params.get("output"));
     sourceDeepLinkAppliedRef.current = true;
 
     queueMicrotask(() => {
       setSourceMode(deepLinkSource);
+      if (deepLinkSource === "youtube" && deepLinkOutput) {
+        setYoutubeOutput(deepLinkOutput);
+      }
       if (deepLinkUrl) {
         setStreamUrl(deepLinkSource, deepLinkUrl);
       }
 
       if (deepLinkUrl && params.get("autostart") === "1") {
-        void startUrlSourceWith(deepLinkSource, deepLinkUrl);
+        void startUrlSourceWith(deepLinkSource, deepLinkUrl, deepLinkOutput ?? undefined);
       }
     });
   }, [setStreamUrl, startUrlSourceWith]);
@@ -919,21 +942,47 @@ export default function Home() {
               </button>
             </>
           ) : (
-            <label className="field stream-url-field">
-              <span>{sourceMode.toUpperCase()} URL</span>
-              <input
-                value={streamUrls[sourceMode]}
-                onChange={(event) => setStreamUrl(sourceMode, event.target.value)}
-                disabled={cameraState === "requesting"}
-                placeholder={getSourcePlaceholder(sourceMode)}
-              />
-              <small>{cameraDetail}</small>
-              {sourceMode === "rtsp" || sourceMode === "youtube" ? (
-                <small className={`gateway-detail ${gatewayStatus}`}>
-                  {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
-                </small>
+            <>
+              <label className="field stream-url-field">
+                <span>{sourceMode.toUpperCase()} URL</span>
+                <input
+                  value={streamUrls[sourceMode]}
+                  onChange={(event) => setStreamUrl(sourceMode, event.target.value)}
+                  disabled={cameraState === "requesting"}
+                  placeholder={getSourcePlaceholder(sourceMode)}
+                />
+                <small>{cameraDetail}</small>
+                {sourceMode === "rtsp" || sourceMode === "youtube" ? (
+                  <small className={`gateway-detail ${gatewayStatus}`}>
+                    {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
+                  </small>
+                ) : null}
+              </label>
+              {sourceMode === "youtube" ? (
+                <div className="output-switch" aria-label="YouTube output">
+                  <span>Output</span>
+                  {(["mp4", "hls"] as const).map((output) => (
+                    <button
+                      className={youtubeOutput === output ? "active" : undefined}
+                      disabled={cameraState === "requesting" || cameraState === "streaming"}
+                      key={output}
+                      onClick={() => setYoutubeOutput(output)}
+                      type="button"
+                    >
+                      {output.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
               ) : null}
-            </label>
+              {sourceMode === "rtsp" ? (
+                <div className="output-switch" aria-label="RTSP output">
+                  <span>Output</span>
+                  <button className="active" disabled type="button">
+                    HLS
+                  </button>
+                </div>
+              ) : null}
+            </>
           )}
 
           <button
@@ -1238,6 +1287,22 @@ function parseSourceMode(value: string | null): SourceMode | null {
   return null;
 }
 
+function parseYoutubeOutput(value: string | null): YoutubeOutput | null {
+  if (value === "hls" || value === "mp4") {
+    return value;
+  }
+
+  return null;
+}
+
+function parseGatewayOutput(value: unknown): GatewayOutput {
+  if (value === "hls" || value === "mp4") {
+    return value;
+  }
+
+  return "mjpg";
+}
+
 async function getGatewayHealth(): Promise<{ ok: boolean; sessions: number }> {
   const response = await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/health`, {
     cache: "no-store",
@@ -1254,7 +1319,11 @@ async function getGatewayHealth(): Promise<{ ok: boolean; sessions: number }> {
   };
 }
 
-async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string): Promise<GatewayStreamResponse> {
+async function createGatewayStream(
+  sourceMode: "rtsp" | "youtube",
+  url: string,
+  output: GatewayOutput,
+): Promise<GatewayStreamResponse> {
   const response = await fetch(`${runtimeDefaults.streamGatewayUrl.replace(/\/$/u, "")}/api/streams`, {
     method: "POST",
     headers: {
@@ -1263,7 +1332,7 @@ async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string):
     body: JSON.stringify({
       sourceType: sourceMode,
       url,
-      output: "mjpg",
+      output,
     }),
   });
 
@@ -1274,7 +1343,7 @@ async function createGatewayStream(sourceMode: "rtsp" | "youtube", url: string):
 
   return {
     id: payload.id,
-    output: payload.output === "hls" ? "hls" : "mjpg",
+    output: parseGatewayOutput(payload.output),
     status: payload.status || "ready",
     url: payload.url,
   };
@@ -1318,7 +1387,7 @@ async function getGatewayStreamStatus(id: string): Promise<GatewaySessionStatus>
 
   return {
     id: payload.id,
-    output: payload.output === "hls" ? "hls" : "mjpg",
+    output: parseGatewayOutput(payload.output),
     status: payload.status || "unknown",
     clients: typeof payload.clients === "number" ? payload.clients : 0,
     lastError: payload.lastError,
@@ -1340,6 +1409,83 @@ async function startVideoUrl(url: string, video: HTMLVideoElement | null) {
   video.crossOrigin = "anonymous";
   video.src = url;
   video.muted = true;
+  await video.play();
+}
+
+async function waitForHlsManifest(url: string) {
+  const startedAt = performance.now();
+  let lastError = "HLS manifest is not ready.";
+
+  while (performance.now() - startedAt < 15000) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      const body = await response.text();
+      if (response.ok && body.includes("#EXTM3U")) {
+        return;
+      }
+      lastError = `HLS manifest returned ${response.status}.`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Could not read HLS manifest.";
+    }
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 500);
+    });
+  }
+
+  throw new Error(lastError);
+}
+
+async function startHlsVideoUrl(url: string, video: HTMLVideoElement | null, setController: (hls: Hls) => void) {
+  if (!video) {
+    throw new Error("Video surface is not ready.");
+  }
+
+  video.crossOrigin = "anonymous";
+  video.muted = true;
+
+  const { default: HlsRuntime } = await import("hls.js");
+  if (!HlsRuntime.isSupported()) {
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = url;
+      await video.play();
+      return;
+    }
+
+    throw new Error("This browser cannot play HLS streams.");
+  }
+
+  const hls = new HlsRuntime({
+    backBufferLength: 30,
+    liveSyncDurationCount: 2,
+    lowLatencyMode: true,
+  });
+  setController(hls);
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+    const rejectOnce = (_event: unknown, data: { details?: string; fatal?: boolean; type?: string }) => {
+      if (!data.fatal || settled) {
+        return;
+      }
+      settled = true;
+      hls.destroy();
+      reject(new Error(`HLS playback failed: ${data.details || data.type || "unknown error"}`));
+    };
+
+    hls.on(HlsRuntime.Events.MANIFEST_PARSED, resolveOnce);
+    hls.on(HlsRuntime.Events.ERROR, rejectOnce);
+    hls.attachMedia(video);
+    hls.loadSource(url);
+  });
+
   await video.play();
 }
 

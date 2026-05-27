@@ -147,6 +147,36 @@ h2 {
   color: #99f6e4;
 }
 
+.output-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.output-switch span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.output-switch button {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0e1218;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.output-switch button.active {
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(45, 212, 191, 0.14);
+  color: #99f6e4;
+}
+
 .control-strip {
   gap: 10px;
 }

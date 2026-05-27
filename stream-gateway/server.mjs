@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 
 const port = Number(process.env.STREAM_GATEWAY_PORT ?? 3010);
 const outputDir = process.env.STREAM_OUTPUT_DIR ?? "/var/lib/v7rc-streams";
-const defaultOutput = process.env.STREAM_DEFAULT_OUTPUT === "hls" ? "hls" : "mjpg";
+const defaultOutput = normalizeDefaultOutput(process.env.STREAM_DEFAULT_OUTPUT);
 const ytdlpFormat = process.env.YTDLP_FORMAT || "best[height<=720][ext=mp4]/best[height<=720]/best";
 const ytdlpTimeoutMs = Number(process.env.YTDLP_TIMEOUT_MS ?? 45000);
 const ytdlpCookiesFile = process.env.YTDLP_COOKIES_FILE || "";
@@ -85,6 +85,12 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const mp4Match = url.pathname.match(/^\/streams\/([^/]+)\.mp4$/u);
+    if (request.method === "GET" && mp4Match) {
+      streamMp4(mp4Match[1], response);
+      return;
+    }
+
     const hlsMatch = url.pathname.match(/^\/streams\/([^/]+)\/(.+)$/u);
     if (request.method === "GET" && hlsMatch) {
       serveHlsFile(hlsMatch[1], hlsMatch[2], response);
@@ -105,7 +111,7 @@ server.listen(port, "0.0.0.0", () => {
 async function createStream(body, request) {
   const sourceType = normalizeSourceType(body?.sourceType);
   const sourceUrl = sourceType === "youtube" ? parseHttpUrl(body?.url, "YouTube URL") : parseInputUrl(body?.url);
-  const output = body?.output === "hls" ? "hls" : defaultOutput;
+  const output = normalizeOutput(body?.output, sourceType);
   const id = safeId(body?.id) || randomUUID();
   const resolvedUrl = sourceType === "youtube" ? await resolveYoutubeUrl(sourceUrl.href) : sourceUrl.href;
   const sessionDir = join(outputDir, id);
@@ -152,6 +158,25 @@ function normalizeSourceType(value) {
   throw new Error("sourceType must be rtsp, youtube, or mjpg.");
 }
 
+function normalizeDefaultOutput(value) {
+  return value === "hls" || value === "mp4" ? value : "mjpg";
+}
+
+function normalizeOutput(value, sourceType) {
+  if (value === "mp4") {
+    if (sourceType && sourceType !== "youtube") {
+      throw new Error("MP4 output is currently supported for YouTube sources only.");
+    }
+    return "mp4";
+  }
+
+  if (value === "hls") {
+    return "hls";
+  }
+
+  return defaultOutput;
+}
+
 function parseInputUrl(value) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("Stream URL is required.");
@@ -177,7 +202,13 @@ function makePublicStreamUrl(request, id, output) {
   const host = request.headers.host ?? `localhost:${port}`;
   const protocol = request.headers["x-forwarded-proto"] ?? "http";
   const base = `${protocol}://${host}`;
-  return output === "hls" ? `${base}/streams/${id}/index.m3u8` : `${base}/streams/${id}.mjpg`;
+  if (output === "hls") {
+    return `${base}/streams/${id}/index.m3u8`;
+  }
+  if (output === "mp4") {
+    return `${base}/streams/${id}.mp4`;
+  }
+  return `${base}/streams/${id}.mjpg`;
 }
 
 async function resolveYoutubeUrl(url) {
@@ -228,7 +259,7 @@ function startHls(session) {
     "-hls_list_size",
     "5",
     "-hls_flags",
-    "delete_segments+append_list+omit_endlist",
+    "delete_segments+append_list",
     join(session.dir, "index.m3u8"),
   ];
   const child = spawnFfmpeg(args);
@@ -276,6 +307,54 @@ function streamMjpg(id, response) {
     "Cache-Control": "no-store",
     "Connection": "close",
     "Content-Type": "multipart/x-mixed-replace; boundary=ffmpeg",
+  });
+
+  child.stdout.pipe(response);
+  child.stderr.on("data", (chunk) => {
+    appendLog(session, chunk.toString());
+  });
+  child.on("exit", () => {
+    response.end();
+  });
+  response.on("close", () => {
+    child.kill("SIGTERM");
+    const current = sessions.get(id);
+    if (current) {
+      current.clients = Math.max(0, current.clients - 1);
+      current.status = current.clients > 0 ? "running" : "ready";
+      current.updatedAt = new Date().toISOString();
+    }
+  });
+}
+
+function streamMp4(id, response) {
+  const session = sessions.get(id);
+  if (!session) {
+    sendJson(response, 404, { error: "Unknown stream id." });
+    return;
+  }
+
+  const args = [
+    ...inputArgs(session, { realtime: false }),
+    "-an",
+    "-c:v",
+    "copy",
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
+    "-f",
+    "mp4",
+    "pipe:1",
+  ];
+  const child = spawnFfmpeg(args);
+  session.clients += 1;
+  session.status = "running";
+  session.updatedAt = new Date().toISOString();
+
+  response.writeHead(200, {
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store",
+    "Connection": "close",
+    "Content-Type": "video/mp4",
   });
 
   child.stdout.pipe(response);
@@ -379,14 +458,14 @@ function maskUrl(value) {
   }
 }
 
-function inputArgs(session) {
+function inputArgs(session, options = {}) {
   const url = session.resolvedUrl;
   const parsed = new URL(url);
   if (parsed.protocol === "rtsp:") {
     return ["-rtsp_transport", "tcp", "-i", url];
   }
 
-  if (session.sourceType === "youtube") {
+  if (session.sourceType === "youtube" && options.realtime !== false) {
     return ["-re", "-i", url];
   }
 

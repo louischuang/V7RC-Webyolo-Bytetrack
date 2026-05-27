@@ -14,16 +14,17 @@ Implemented now:
 - `GET /health` reports gateway health.
 - `GET /streams/{id}.mjpg` starts an ffmpeg MJPG response for that session.
 - `GET /streams/{id}/index.m3u8` and segment paths serve HLS files when `output=hls`.
+- `GET /streams/{id}.mp4` streams fragmented MP4 when `output=mp4`; this is currently intended for YouTube sources.
 - RTSP inputs use ffmpeg with TCP transport.
 - YouTube inputs are resolved with `yt-dlp -g`, then sent to ffmpeg.
-- YouTube inputs use ffmpeg realtime pacing (`-re`) so VOD media is not converted faster than normal playback speed.
+- YouTube HLS/MJPG inputs use ffmpeg realtime pacing (`-re`) so VOD media is not converted faster than normal playback speed.
+- HLS output allows ffmpeg to write `#EXT-X-ENDLIST` when finite sources end, so YouTube VOD playback can complete cleanly in hls.js.
 - YouTube resolver settings are configurable with `YTDLP_FORMAT`, `YTDLP_TIMEOUT_MS`, `YTDLP_COOKIES_FILE`, and `YTDLP_USER_AGENT`.
-- The frontend calls the gateway for RTSP and YouTube modes and uses the returned MJPG URL.
+- The frontend calls the gateway for RTSP and YouTube modes. RTSP currently uses HLS. YouTube can use MP4 or HLS.
 - The frontend polls active gateway session status and displays client/log/error details under the source URL field.
 
 Still planned:
 
-- HLS player integration in the frontend.
 - Authentication/allowlists before untrusted network deployment.
 - WebRTC mode for low-latency robot control.
 - Rich runtime UI for gateway conversion logs beyond the compact status line.
@@ -62,7 +63,8 @@ stream-gateway
   ├─ input: YouTube URL
   ├─ converter: ffmpeg, GStreamer, or MediaMTX
   ├─ output: /streams/{id}.mjpg
-  └─ output: /streams/{id}/index.m3u8
+  ├─ output: /streams/{id}/index.m3u8
+  └─ output: /streams/{id}.mp4
 
 Chrome app
   ├─ Source mode: MJPG / RTSP / YouTube
@@ -78,11 +80,12 @@ Chrome app
 2. Start with ffmpeg because it is easy to package and debug. Done.
 3. Support RTSP input first. Done.
 4. Output MJPG first for fast integration with the existing `<img>` path. Done.
-5. Add HLS output for lower bandwidth. Gateway API done; frontend player still planned.
+5. Add HLS output for lower bandwidth. Done.
 6. Add YouTube support through `yt-dlp` plus ffmpeg when allowed by the source and deployment policy. Done.
-7. Add cleanup for stale streams and temporary files.
-8. Benchmark latency and CPU use.
-9. Evaluate WebRTC mode for low-latency robot control.
+7. Add YouTube MP4 output for faster playback without HLS segmenting. Done.
+8. Add cleanup for stale streams and temporary files.
+9. Benchmark latency and CPU use.
+10. Evaluate WebRTC mode for low-latency robot control.
 
 ## Gateway API Sketch
 
@@ -202,6 +205,22 @@ Cons:
 - Latency is usually higher than MJPG or WebRTC.
 - Chrome often needs an HLS JavaScript player for `.m3u8` playback.
 
+### MP4
+
+Fast YouTube playback path.
+
+Pros:
+
+- Avoids HLS segment generation.
+- Can copy the resolved YouTube video stream when the source codec is browser-compatible.
+- Uses Chrome native `<video>` playback and remains canvas-readable through the app's video surface.
+
+Cons:
+
+- Currently limited to YouTube gateway sessions.
+- Some sources may still require transcoding later if the resolved codec is not playable in Chrome.
+- Not a low-latency live transport; WebRTC is still the target for closed-loop robot control.
+
 ### WebRTC
 
 Best long-term target for robot closed-loop control.
@@ -250,10 +269,10 @@ services:
 The current frontend has source modes for Camera, MJPG, RTSP, and YouTube.
 
 - If mode is `MJPG`, direct URL support is kept.
-- If mode is `RTSP`, the app calls the gateway API with the entered URL and uses the returned MJPG URL.
-- If mode is `YouTube`, the app calls the gateway API with the entered URL and uses the returned MJPG URL.
+- If mode is `RTSP`, the app calls the gateway API with the entered URL and uses the returned HLS URL.
+- If mode is `YouTube`, the app calls the gateway API with the entered URL and uses the selected MP4 or HLS output.
 - The app stops gateway sessions when the user presses Stop or switches source modes.
-- Gateway startup state and logs in the UI are still planned.
+- Gateway startup state, compact logs, and errors are shown under the source URL field.
 
 ## Security and Policy Notes
 
@@ -269,6 +288,8 @@ The current frontend has source modes for Camera, MJPG, RTSP, and YouTube.
 
 - RTSP camera converts to MJPG and appears in the app.
 - RTSP camera converts to HLS and appears in the app.
+- YouTube converts to MP4 and appears in the app.
+- YouTube converts to HLS and appears in the app.
 - YOLO boxes align on gateway output.
 - ByteTrack IDs remain stable on gateway output.
 - Gemma receives the active source frame.

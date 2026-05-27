@@ -50,11 +50,13 @@ Implemented gateway MVP:
 
 - `stream-gateway` Docker service runs on `${STREAM_GATEWAY_PORT:-3010}`.
 - RTSP and YouTube modes call the gateway API and receive a browser-readable stream URL.
-- The default gateway output is MJPG because it plugs into the existing image-frame YOLO path.
+- RTSP currently uses HLS in the frontend.
+- YouTube can be started as either MP4 or HLS from the output selector.
+- MP4 is the fastest YouTube path because the gateway resolves the media URL and streams fragmented MP4 to Chrome without transcoding when possible.
+- HLS is the compatibility path for longer-running streams and browser-friendly HTTP playback.
 - YouTube support uses `yt-dlp` plus ffmpeg when allowed by the source and deployment policy.
 - YouTube mode includes a `Check` action that asks the gateway to resolve the watch URL before starting the stream.
 - `YTDLP_FORMAT`, `YTDLP_TIMEOUT_MS`, `YTDLP_COOKIES_FILE`, and `YTDLP_USER_AGENT` can tune YouTube resolution in Docker Compose.
-- HLS output is available at the gateway API level for later frontend/player work.
 - Later: RTSP -> WebRTC for lower-latency robot closed-loop control.
 
 The gateway runs next to the Next.js app in Docker Compose and exposes browser-compatible URLs such as:
@@ -62,6 +64,7 @@ The gateway runs next to the Next.js app in Docker Compose and exposes browser-c
 ```text
 http://localhost:3010/streams/robot-front.mjpg
 http://localhost:3010/streams/robot-front/index.m3u8
+http://localhost:3010/streams/youtube-demo.mp4
 ```
 
 More details: [docs/stream-gateway.md](docs/stream-gateway.md).

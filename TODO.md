@@ -54,13 +54,16 @@
 - [x] Add configurable YouTube resolver format, timeout, cookies file, and user-agent.
 - [x] Output MJPG endpoint for fastest YOLO/canvas integration.
 - [x] Output HLS endpoint for lower bandwidth and better browser compatibility.
+- [x] Add frontend HLS playback for gateway sources.
+- [x] Add YouTube MP4 gateway output for faster Chrome playback.
+- [x] Add YouTube MP4/HLS output selector in the source controls.
 - [x] Store temporary HLS segments outside the app image.
 - [x] Add stream lifecycle cleanup for stopped or stale sessions.
 - [x] Add healthcheck endpoint for the gateway.
 - [x] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
 - [x] Add gateway session status endpoint with masked input URL and recent logs.
 - [x] Poll active gateway session status from the frontend.
-- [ ] Document that WebRTC is the later low-latency path for robot closed-loop control.
+- [x] Document that WebRTC is the later low-latency path for robot closed-loop control.
 - [ ] Benchmark RTSP->MJPG latency and CPU load.
 - [ ] Benchmark RTSP->HLS latency and CPU load.
 - [ ] Decide whether the first production robot target should use MJPG, HLS, or WebRTC.
@@ -157,7 +160,8 @@
 - [ ] Verify camera works from Chrome against container-hosted app.
 - [ ] Verify MJPG source works against container-hosted app.
 - [ ] Verify RTSP gateway source works against container-hosted app.
-- [ ] Verify YouTube gateway source works against container-hosted app when policy allows.
+- [x] Verify YouTube HLS gateway source works against container-hosted app when policy allows.
+- [x] Verify YouTube MP4 gateway source works against container-hosted app when policy allows.
 - [ ] Verify Gemma4-E2B runs in Chrome against container-hosted static model artifacts.
 
 ## Phase 10 - Validation
@@ -170,7 +174,8 @@
 - [ ] Test with iPhone Continuity Camera if available.
 - [ ] Test with direct MJPG URL.
 - [ ] Test with gateway-converted RTSP URL.
-- [ ] Test with gateway-converted YouTube URL.
+- [x] Test with gateway-converted YouTube HLS URL.
+- [x] Test with gateway-converted YouTube MP4 URL.
 - [ ] Test with detection enabled for at least 10 minutes.
 - [ ] Check memory growth during long-running detection.
 - [ ] Confirm no remote network calls are required for inference after models are installed.
