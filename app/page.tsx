@@ -81,8 +81,8 @@ type RoadCalibration = {
   topY: number;
 };
 type LaneDetection = {
-  left: NormalizedPoint[] | null;
-  right: NormalizedPoint[] | null;
+  left: NormalizedPoint[][];
+  right: NormalizedPoint[][];
   confidence: number;
   roiConfidence: number;
   road: RoadCalibration;
@@ -2263,11 +2263,7 @@ function drawBirdViewDetectedLane(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const path of [laneDetection.left, laneDetection.right]) {
-    if (!path) {
-      continue;
-    }
-
+  for (const path of [...laneDetection.left, ...laneDetection.right]) {
     drawProjectedLanePath(context, path, (point) =>
       projectNormalizedPointToBirdView(point, width, height, destinationRoad, roadCalibration),
     );
@@ -2331,11 +2327,7 @@ function drawDetectedLaneLines(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const path of [laneDetection.left, laneDetection.right]) {
-    if (!path) {
-      continue;
-    }
-
+  for (const path of [...laneDetection.left, ...laneDetection.right]) {
     drawProjectedLanePath(context, path, (point) =>
       sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
     );
@@ -2410,8 +2402,8 @@ function detectLaneLinesFromSource(
     }
   }
 
-  const left = fitLanePath(leftPoints);
-  const right = fitLanePath(rightPoints);
+  const left = fitLanePaths(leftPoints);
+  const right = fitLanePaths(rightPoints);
   const rowCount = Math.max(1, Math.floor((endY - startY) / 3));
   const confidence = clamp01(
     (Math.min(leftPoints.length, rowCount * 0.6) + Math.min(rightPoints.length, rowCount * 0.6)) / (rowCount * 1.2),
@@ -2456,48 +2448,75 @@ function findLanePixelCandidate(data: Uint8ClampedArray, width: number, y: numbe
   return bestScore > 18 ? { score: bestScore, x: bestX } : null;
 }
 
-function fitLanePath(points: NormalizedPoint[]): NormalizedPoint[] | null {
+function fitLanePaths(points: NormalizedPoint[]): NormalizedPoint[][] {
   if (points.length < 6) {
-    return null;
+    return [];
   }
 
   const sorted = [...points].sort((a, b) => a.y - b.y);
+  const rawSegments: NormalizedPoint[][] = [];
+  let currentSegment: NormalizedPoint[] = [];
+  const maxGapY = 0.035;
+
+  for (const point of sorted) {
+    const previous = currentSegment.at(-1);
+    if (previous && point.y - previous.y > maxGapY) {
+      rawSegments.push(currentSegment);
+      currentSegment = [];
+    }
+    currentSegment.push(point);
+  }
+  if (currentSegment.length > 0) {
+    rawSegments.push(currentSegment);
+  }
+
   const bucketSize = 4;
-  const bucketed: NormalizedPoint[] = [];
+  const smoothedSegments: NormalizedPoint[][] = [];
 
-  for (let index = 0; index < sorted.length; index += bucketSize) {
-    const bucket = sorted.slice(index, index + bucketSize);
-    const average = bucket.reduce(
-      (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
-      { x: 0, y: 0 },
+  for (const segment of rawSegments) {
+    if (segment.length < 6) {
+      continue;
+    }
+
+    const bucketed: NormalizedPoint[] = [];
+    for (let index = 0; index < segment.length; index += bucketSize) {
+      const bucket = segment.slice(index, index + bucketSize);
+      const average = bucket.reduce(
+        (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+        { x: 0, y: 0 },
+      );
+      bucketed.push({
+        x: clamp01(average.x / bucket.length),
+        y: clamp01(average.y / bucket.length),
+      });
+    }
+
+    if (bucketed.length < 2) {
+      continue;
+    }
+
+    smoothedSegments.push(
+      bucketed.map((point, index) => {
+        const previous = bucketed[Math.max(0, index - 1)];
+        const next = bucketed[Math.min(bucketed.length - 1, index + 1)];
+
+        return {
+          x: clamp01((previous.x + point.x * 2 + next.x) / 4),
+          y: point.y,
+        };
+      }),
     );
-    bucketed.push({
-      x: clamp01(average.x / bucket.length),
-      y: clamp01(average.y / bucket.length),
-    });
   }
 
-  if (bucketed.length < 3) {
-    return null;
-  }
-
-  return bucketed.map((point, index) => {
-    const previous = bucketed[Math.max(0, index - 1)];
-    const next = bucketed[Math.min(bucketed.length - 1, index + 1)];
-
-    return {
-      x: clamp01((previous.x + point.x * 2 + next.x) / 4),
-      y: point.y,
-    };
-  });
+  return smoothedSegments;
 }
 
 function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
   return {
     confidence: 0,
-    left: null,
+    left: [],
     road: roadCalibration,
-    right: null,
+    right: [],
     roiConfidence: 0,
     updatedAt: performance.now(),
   };
@@ -2569,16 +2588,20 @@ function blendRoadCalibration(
   currentCalibration: RoadCalibration,
   laneDetection: LaneDetection,
 ) {
-  if (!laneDetection.left || !laneDetection.right || laneDetection.confidence < 0.18) {
+  if (laneDetection.left.length === 0 || laneDetection.right.length === 0 || laneDetection.confidence < 0.18) {
     return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
   }
 
   const topY = manualCalibration.topY;
   const bottomY = manualCalibration.bottomY;
-  const leftTop = pathXAtY(laneDetection.left, topY);
-  const rightTop = pathXAtY(laneDetection.right, topY);
-  const leftBottom = pathXAtY(laneDetection.left, bottomY);
-  const rightBottom = pathXAtY(laneDetection.right, bottomY);
+  const leftTop = pathsXAtY(laneDetection.left, topY);
+  const rightTop = pathsXAtY(laneDetection.right, topY);
+  const leftBottom = pathsXAtY(laneDetection.left, bottomY);
+  const rightBottom = pathsXAtY(laneDetection.right, bottomY);
+
+  if (leftTop === null || rightTop === null || leftBottom === null || rightBottom === null) {
+    return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
+  }
   const detectedBottomWidth = rightBottom - leftBottom;
   const detectedTopWidth = rightTop - leftTop;
 
@@ -2620,6 +2643,20 @@ function approachRoadCalibration(from: RoadCalibration, to: RoadCalibration, wei
   };
 }
 
+function pathsXAtY(paths: NormalizedPoint[][], y: number) {
+  let nearest: { distance: number; x: number } | null = null;
+
+  for (const path of paths) {
+    const range = pathYRange(path);
+    const distance = y < range.min ? range.min - y : y > range.max ? y - range.max : 0;
+    if (!nearest || distance < nearest.distance) {
+      nearest = { distance, x: pathXAtY(path, y) };
+    }
+  }
+
+  return nearest && nearest.distance <= 0.16 ? nearest.x : null;
+}
+
 function pathXAtY(path: NormalizedPoint[], y: number) {
   const sorted = [...path].sort((a, b) => a.y - b.y);
   if (y <= sorted[0].y) {
@@ -2636,6 +2673,16 @@ function pathXAtY(path: NormalizedPoint[], y: number) {
   }
 
   return sorted[sorted.length - 1].x;
+}
+
+function pathYRange(path: NormalizedPoint[]) {
+  return path.reduce(
+    (range, point) => ({
+      max: Math.max(range.max, point.y),
+      min: Math.min(range.min, point.y),
+    }),
+    { max: 0, min: 1 },
+  );
 }
 
 function sourceRoadAtY(normalizedY: number, roadCalibration: RoadCalibration) {
