@@ -137,7 +137,8 @@
 - [ ] Implement model download progress and cache status.
 - [ ] Implement WebGPU capability detection.
 - [ ] Implement memory/error diagnostics for unsupported devices.
-- [ ] Make `NEXT_PUBLIC_LLM_RUNTIME`, `NEXT_PUBLIC_LLM_MODEL_ID`, `NEXT_PUBLIC_LLM_MODEL_URL`, and generation settings configurable.
+- [ ] Make `NEXT_PUBLIC_LLM_RUNTIME`, `NEXT_PUBLIC_LLM_DEVICE`, `NEXT_PUBLIC_LLM_MODEL_ID`, `NEXT_PUBLIC_LLM_MODEL_URL`, and generation settings configurable.
+- [ ] Add a safety-first scheduler that keeps YOLO/ByteTrack active even when Gemma is slow.
 - [ ] Show loading and error states.
 - [ ] Verify `google/gemma-4-E2B-it` or its browser-ready quantized derivative inside Chrome.
 - [ ] Confirm chat requests do not call a server-side LLM API.

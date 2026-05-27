@@ -67,8 +67,10 @@ type TrackRow = {
 };
 
 type RobotMode = "suggestion" | "armed";
+type LlmDevice = "wasm" | "webgpu";
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
+const defaultLlmDevice: LlmDevice = process.env.NEXT_PUBLIC_LLM_DEVICE === "webgpu" ? "webgpu" : "wasm";
 const defaultLlmModelId =
   defaultLlmRuntime === "transformers" ? "onnx-community/gemma-4-E2B-it-ONNX" : "gemma-4-E2B-it-q4f16_1-MLC";
 
@@ -88,6 +90,7 @@ const runtimeDefaults = {
   llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 160),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
   llmRuntime: defaultLlmRuntime,
+  llmDevice: defaultLlmDevice,
   llmLoopDelayMs: Number(process.env.NEXT_PUBLIC_LLM_LOOP_DELAY_MS ?? 1200),
   llmFrameMaxSide: Number(process.env.NEXT_PUBLIC_LLM_FRAME_MAX_SIDE ?? 448),
   llmFrameJpegQuality: Number(process.env.NEXT_PUBLIC_LLM_FRAME_JPEG_QUALITY ?? 0.72),
@@ -553,6 +556,12 @@ export default function Home() {
     let cancelled = false;
 
     const checkGpu = async () => {
+      if (runtimeDefaults.llmRuntime === "transformers" && runtimeDefaults.llmDevice === "wasm") {
+        setLlmState("idle");
+        setLlmDetail("Gemma ready to load in WASM worker mode; YOLO keeps WebGPU priority.");
+        return;
+      }
+
       setLlmState("checking");
       const status = await getWebGpuStatus();
       if (cancelled) {
@@ -582,6 +591,7 @@ export default function Home() {
     try {
       const llm = new BrowserLlm({
         runtime: runtimeDefaults.llmRuntime === "webllm" ? "webllm" : "transformers",
+        device: runtimeDefaults.llmDevice,
         modelId: runtimeDefaults.llmModelId,
         modelUrl: runtimeDefaults.llmModelUrl,
         modelLibUrl: runtimeDefaults.llmModelLibUrl,
@@ -597,7 +607,7 @@ export default function Home() {
       llmRef.current = llm;
       setLlmState("ready");
       setLlmProgress(null);
-      setLlmDetail(`${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`);
+      setLlmDetail(`${runtimeDefaults.llmRuntime} ${runtimeDefaults.llmDevice} ready / ${runtimeDefaults.llmModelId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Gemma load error.";
       setLlmState("error");
@@ -658,7 +668,7 @@ export default function Home() {
         },
       ]);
       setLlmState("ready");
-      setLlmDetail(`${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`);
+      setLlmDetail(`${runtimeDefaults.llmRuntime} ${runtimeDefaults.llmDevice} ready / ${runtimeDefaults.llmModelId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Gemma generation error.";
       setChatMessages((messages) => [...messages, { role: "assistant", content: message }]);
@@ -700,7 +710,7 @@ export default function Home() {
         inferenceRunningRef.current
           ? "Stopping after the current local inference finishes..."
           : llmRef.current
-            ? `${runtimeDefaults.llmRuntime} ready / ${runtimeDefaults.llmModelId}`
+            ? `${runtimeDefaults.llmRuntime} ${runtimeDefaults.llmDevice} ready / ${runtimeDefaults.llmModelId}`
             : llmDetail,
       );
       return;

@@ -343,15 +343,18 @@ Configurable values:
 
 ### Browser-Local Multimodal LLM
 
-The user requested `Gemma4:E2B` running directly inside the web page. Hugging Face currently lists Google official repositories for `google/gemma-4-E2B` and the instruction-tuned `google/gemma-4-E2B-it`. The MVP should use a browser runtime such as Transformers.js, WebLLM, MLC WebLLM, or another WebGPU-first runtime that can run a compatible Gemma4-E2B browser artifact.
+The user requested `Gemma4:E2B` running directly inside the web page. Hugging Face currently lists Google official repositories for `google/gemma-4-E2B` and the instruction-tuned `google/gemma-4-E2B-it`. The MVP should use a browser runtime such as Transformers.js, WebLLM, MLC WebLLM, or another browser runtime that can run a compatible Gemma4-E2B browser artifact.
+
+Safety priority: YOLO/ByteTrack is the real-time accident and obstacle perception layer. LLM output may be slower, but it must not pause YOLO, steal the detector's WebGPU priority, or freeze the video surface. The default Gemma device should therefore be a background WASM worker unless a benchmark explicitly selects WebGPU for the LLM.
 
 Recommended environment variables:
 
-- `NEXT_PUBLIC_LLM_RUNTIME=webgpu`
-- `NEXT_PUBLIC_LLM_MODEL_ID=google/gemma-4-E2B-it`
-- `NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it`
-- `NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=512`
-- `NEXT_PUBLIC_LLM_TEMPERATURE=0.7`
+- `NEXT_PUBLIC_LLM_RUNTIME=transformers`
+- `NEXT_PUBLIC_LLM_DEVICE=wasm`
+- `NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX`
+- `NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx`
+- `NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=160`
+- `NEXT_PUBLIC_LLM_TEMPERATURE=0.2`
 
 If the selected browser runtime requires a converted or quantized artifact, `NEXT_PUBLIC_LLM_MODEL_URL` should point to that browser-ready package. The raw Hugging Face safetensors checkpoint is a source model, not necessarily the production browser artifact.
 

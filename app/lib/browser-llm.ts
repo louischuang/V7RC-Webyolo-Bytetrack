@@ -7,6 +7,7 @@ export type BrowserLlmMessage = {
 
 export type BrowserLlmConfig = {
   runtime: "webllm" | "transformers";
+  device: "wasm" | "webgpu";
   modelId: string;
   modelUrl: string;
   modelLibUrl: string;
@@ -237,6 +238,7 @@ export class BrowserLlm {
       {
         type: "load",
         modelId,
+        device: this.config.device,
         maxNewTokens: this.config.maxNewTokens,
         temperature: this.config.temperature,
       },
@@ -250,6 +252,7 @@ export class BrowserLlm {
       type: "generate",
       messages,
       imageDataUrl,
+      device: this.config.device,
       maxNewTokens: this.config.maxNewTokens,
       temperature: this.config.temperature,
     })) as BrowserLlmGeneration;

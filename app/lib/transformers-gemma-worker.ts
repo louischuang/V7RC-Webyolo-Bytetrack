@@ -6,6 +6,7 @@ type WorkerRequest =
       id: number;
       type: "load";
       modelId: string;
+      device: "wasm" | "webgpu";
       maxNewTokens: number;
       temperature: number;
     }
@@ -14,6 +15,7 @@ type WorkerRequest =
       type: "generate";
       messages: BrowserLlmMessage[];
       imageDataUrl?: string;
+      device: "wasm" | "webgpu";
       maxNewTokens: number;
       temperature: number;
     };
@@ -64,8 +66,8 @@ async function loadModel(request: Extract<WorkerRequest, { type: "load" }>) {
     progress_callback,
   });
   model = await Gemma4ForConditionalGeneration.from_pretrained(request.modelId, {
-    dtype: "q4f16",
-    device: "webgpu",
+    dtype: request.device === "webgpu" ? "q4f16" : "q4",
+    device: request.device,
     progress_callback,
   });
 }
@@ -95,6 +97,7 @@ async function generateText(request: Extract<WorkerRequest, { type: "generate" }
   });
   const diagnostics = [
     "runtime=transformers-worker",
+    `device=${request.device}`,
     `messages=${request.messages.length}`,
     `image=${request.imageDataUrl ? "true" : "false"}`,
     `max_new_tokens=${request.maxNewTokens}`,
