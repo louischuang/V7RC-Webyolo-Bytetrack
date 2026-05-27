@@ -640,7 +640,7 @@ export default function Home() {
     inferenceRunningRef.current = true;
     inferenceRoundRef.current += 1;
     setLlmState("generating");
-    setLlmDetail(`Generating local loop round ${inferenceRoundRef.current}; vision detection paused...`);
+    setLlmDetail(`Generating local loop round ${inferenceRoundRef.current}...`);
 
     try {
       await waitForNextAnimationFrame();
@@ -948,7 +948,6 @@ export default function Home() {
         source &&
         detector &&
         isSourceReady(source) &&
-        !inferenceRunningRef.current &&
         !detectingRef.current
       ) {
         detectionFrameRef.current += 1;
