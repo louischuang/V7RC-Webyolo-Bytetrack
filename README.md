@@ -161,6 +161,95 @@ The current app is still observation-first: camera/stream frames go through YOLO
 Vision source -> YOLO/ByteTrack -> Gemma4-E2B action JSON -> safety controller -> V7RC channel frame -> Web Bluetooth robot link
 ```
 
+## Next MVP: Task And Autopilot Console
+
+The next UI milestone changes the main workspace from two columns into three columns:
+
+```text
+Top status bar
+└─ Main workspace
+   ├─ Left: 16:9 camera/video stage with overlay, reduced width
+   ├─ Middle: mission/autopilot cards, same width as the right cards
+   └─ Right: Camera, YOLO11n, Gemma4-E2B, Robot/V7RC, and tracked objects
+```
+
+The new middle column should contain:
+
+- `Robot Task` card with two segmented modes:
+  - `Autopilot`: deterministic lane-following.
+  - `Mission`: LLM-assisted goal solving.
+- Start/Stop icon button beside the selected task mode.
+- `Bird's-Eye View` card that renders a top-down driving view from the current source frame.
+- YOLO11n/ByteTrack objects projected into the bird's-eye view by transforming the bottom-center point of each box through the same perspective transform used for the lane view.
+
+### Autopilot Mode
+
+Autopilot should be deterministic and safety-first. It does not wait for Gemma.
+
+Planned browser pipeline:
+
+```text
+Camera frame
+  -> OpenCV.js worker
+  -> ROI crop
+  -> perspective transform / bird's-eye view
+  -> color threshold and/or grayscale threshold
+  -> blur + Canny
+  -> HoughLinesP or contour/sliding-window lane extraction
+  -> lane center offset
+  -> safety controller
+  -> V7RC SRT command stream every 30ms
+```
+
+OpenCV.js is the planned browser CV runtime. Prefer a pinned self-hosted OpenCV.js/WebAssembly artifact under `public/vendor/opencv/` so production does not depend on a CDN. Official OpenCV.js documentation shows browser use through an `opencv.js` script and the global `cv` object; it can be loaded asynchronously and should release `cv.Mat` objects after each frame to avoid heap growth.
+
+Autopilot control rule for the first pass:
+
+- If lane detection is valid and no obstacle hazard is present, drive forward at 50% throttle.
+- Use lane center offset to generate steering.
+- If a person, obstacle, missing lane, stale frame, or command timeout is detected, send stop/neutral first.
+- YOLO/ByteTrack safety rules always override lane-follow commands.
+
+### Mission Mode
+
+Mission mode asks Gemma4-E2B to produce short command plans, then the browser controller expands those plans into the 30ms V7RC `SRT` command loop. Gemma does not write raw SRT frames.
+
+Recommended mission command payload:
+
+```json
+{
+  "version": 1,
+  "message": "移動搜尋物體",
+  "missionStatus": "running",
+  "planDurationMs": 2000,
+  "actions": [
+    { "move": "forward", "ms": 300, "power": 0.35 },
+    { "move": "turn_right", "ms": 500, "power": 0.25 },
+    { "move": "forward", "ms": 1200, "power": 0.35 },
+    { "move": "stop", "ms": 300 }
+  ]
+}
+```
+
+Payload rules:
+
+- `message` is shown in the task card. Use `任務完成` or `mission complete` when the goal is complete.
+- `missionStatus` should be one of `running`, `complete`, `blocked`, `unsafe`, or `failed`.
+- Total action time should stay near `planDurationMs`, defaulting to 2000ms.
+- `move` should use a controlled enum: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, or `stop`.
+- `ms` is duration in milliseconds, not seconds.
+- `power` is optional, clamped by the safety controller, and defaults to a low safe value.
+- The browser controller converts each action into repeated 30ms `SRT` frames.
+- The safety controller may interrupt any action sequence and send stop/neutral.
+
+Mission prompt direction:
+
+```text
+你是機器人的任務規劃器。請根據目前影像、YOLO11n 物件、ByteTrack ID、鳥瞰圖與任務目標，只輸出一個 JSON，不要輸出 Markdown。
+每次輸出最多約 2 秒的短動作計畫。若任務完成，message 必須包含「任務完成」或「mission complete」。
+若看到目標，請在 message 中提到目標與 track ID。若不安全或無法完成，請用 message 說明原因，並讓 actions 以 stop 結尾。
+```
+
 Planned browser-side modules:
 
 - `RobotGoal`: stores the active mission, such as "find a red box".
@@ -175,7 +264,7 @@ V7RC protocol notes:
 - Each BLE command packet is 20 bytes or less.
 - The first 3 characters are the command code.
 - Every packet ends with `#`.
-- `HEX` is the preferred 16-channel PWM command: `HEX + 16 raw bytes + #`.
+- `HEX` is the full 16-channel PWM command: `HEX + 16 raw bytes + #`.
 - In `HEX`, payload byte 0 maps to channel 0 and byte 15 maps to channel 15.
 - `HEX` PWM conversion is `pwm_us = value * 10`, so byte values `100`, `150`, and `200` map to `1000 us`, `1500 us`, and `2000 us`.
 
@@ -189,7 +278,17 @@ V7RC BLE UART-style UUIDs:
 | RX | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` | Write / Write Without Response |
 | TX | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` | Notify |
 
-Initial logical channel semantics on top of `HEX` channel indices are planned as:
+Current drivetrain control uses 4-channel text `SRT` frames:
+
+| Robot mode | Channel mapping |
+| --- | --- |
+| Vehicle | `CH0` steering wheel, `CH1` throttle, `CH2-CH3` neutral |
+| Tank | `CH0` turn, `CH1` throttle, `CH2-CH3` neutral |
+| Mecanum | `CH0` strafe, `CH1` throttle, `CH2` turn, `CH3` neutral |
+
+`SRT` command examples look like `SRT1500150015001500#`. The browser sends the current 4-channel `SRT` state every 30ms after Mock or BLE transport is connected.
+
+Older full-channel logical semantics on top of `HEX` channel indices are kept as a later expansion path:
 
 | Channel | Meaning |
 | --- | --- |

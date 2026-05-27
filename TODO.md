@@ -16,6 +16,13 @@ The MVP is now a working Chrome-first local perception app:
 - Robot command preview uses 4-channel `SRT` PWM frames.
 - Connected robot transports send the current `SRT` command every 30ms.
 
+Next planning target:
+
+- Convert the workspace to a three-column robot task console.
+- Add `Autopilot` and `Mission` task modes.
+- Add OpenCV.js lane detection and bird's-eye view visualization.
+- Add LLM JSON action plans that are expanded into 30ms V7RC `SRT` frames.
+
 ## Phase 0 - Project Bootstrap
 
 - [x] Create Next.js TypeScript app structure.
@@ -38,6 +45,10 @@ The MVP is now a working Chrome-first local perception app:
 - [x] Add Camera settings modal with Camera/MJPG/RTSP/YouTube source options.
 - [x] Add Gemma settings modal with include-frame, system prompt, and fixed prompt settings.
 - [x] Cache Gemma prompt/settings in browser `localStorage`.
+- [ ] Convert workspace from two columns to three columns.
+- [ ] Reduce camera/video column width while preserving 16:9.
+- [ ] Add a middle card column with the same width as the right control cards.
+- [ ] Move robot task/autopilot cards into the middle column.
 - [ ] Add a compact robot safety/command-rate metric strip.
 
 ## Phase 2 - Camera And Sources
@@ -266,16 +277,56 @@ The MVP is now a working Chrome-first local perception app:
 - [ ] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
 - [ ] Add a goal editor for target object, target color, success condition, and safety constraints.
 - [ ] Keep suggestion mode as the default: Gemma proposes actions, but hardware control remains gated.
-- [ ] Update Gemma system prompt to require strict action JSON.
+- [ ] Update Gemma system prompt to require strict mission action-plan JSON.
+- [ ] Use JSON-only prompt instructions in Chinese and reject Markdown responses.
+- [ ] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
+- [ ] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
+- [ ] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
 - [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
-- [ ] Add current track summary, target color hints, recent command state, and drive mode to the Gemma prompt.
+- [ ] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
 - [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
 - [ ] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
+- [ ] Display the last mission `message`, including target-visible messages and `任務完成` / `mission complete`.
 - [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
 - [ ] Store goal/control settings in browser local storage.
 
-## Phase 15 - Safety Controller
+## Phase 15 - Task Console And Bird's-Eye View
+
+- [ ] Add Robot Task card.
+- [ ] Add mode buttons for `Autopilot` and `Mission`.
+- [ ] Add Start/Stop icon button on the Robot Task card.
+- [ ] Add task status states: idle, running, complete, blocked, unsafe, error.
+- [ ] Add task message display.
+- [ ] Add command-plan preview for Mission mode.
+- [ ] Add Bird's-Eye View card below Robot Task.
+- [ ] Implement perspective transform calibration settings.
+- [ ] Render current frame as bird's-eye view.
+- [ ] Project YOLO/ByteTrack detections into bird's-eye view using box bottom-center points.
+- [ ] Draw projected object labels and track IDs on the bird's-eye view.
+- [ ] Draw current motion vector or steering/throttle cue.
+- [ ] Cache bird's-eye transform settings in browser local storage.
+
+## Phase 16 - OpenCV.js Autopilot
+
+- [ ] Choose OpenCV.js delivery method: self-hosted official `opencv.js`/WASM artifact under `public/vendor/opencv/`.
+- [ ] Add OpenCV.js loader with ready/error status.
+- [ ] Run OpenCV.js lane detection in a Web Worker if possible.
+- [ ] Add ROI selection for lane/ground area.
+- [ ] Add perspective transform from camera view to bird's-eye view.
+- [ ] Add lane color and/or grayscale thresholding.
+- [ ] Add blur + Canny edge detection.
+- [ ] Add HoughLinesP or contour/sliding-window lane extraction.
+- [ ] Estimate lane center and heading.
+- [ ] Draw lane overlay on the camera view.
+- [ ] Draw lane overlay on the bird's-eye view.
+- [ ] Generate proportional steering from lane center offset.
+- [ ] In clear-lane conditions, command 50% forward throttle.
+- [ ] Stop/neutral when lane detection is missing, stale, or low confidence.
+- [ ] Ensure YOLO/ByteTrack obstacle rules override lane-follow output.
+- [ ] Add OpenCV heap cleanup discipline for all `cv.Mat` allocations.
+
+## Phase 17 - Safety Controller
 
 - [ ] Implement a safety layer that can stop the robot without waiting for LLM output.
 - [ ] Convert YOLO/ByteTrack observations into deterministic hazard states.
@@ -289,7 +340,7 @@ The MVP is now a working Chrome-first local perception app:
 - [ ] Add explicit armed/autonomy gate before non-neutral commands can reach hardware.
 - [ ] Add emergency stop state that requires user reset.
 
-## Phase 16 - Closed-Loop Goal Execution
+## Phase 18 - Closed-Loop Goal Execution
 
 - [ ] Implement first goal template: find a colored box.
 - [ ] Implement search state: slow rotate/scan until a candidate target appears.

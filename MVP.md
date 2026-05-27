@@ -4,6 +4,8 @@
 
 Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam or browser-compatible stream source, performs YOLO object detection in the browser, tracks objects with ByteTrack, overlays bounding boxes and IDs on the video, lists tracked objects, runs Gemma4-E2B directly inside the web page without a server-side LLM API, and prepares the robot closed loop that can command a V7RC robot over Bluetooth through the V7RC protocol.
 
+The next MVP iteration turns the current perception console into a robot task console with a smaller video stage, a new middle task column, deterministic lane-following autopilot, a bird's-eye view panel, and an LLM mission planner that emits short JSON motion plans.
+
 ## MVP Scope
 
 ### In Scope
@@ -32,6 +34,13 @@ Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam or 
 - V7RC protocol mapping from normalized robot intents to motor/servo channels.
 - Goal-driven perception loop planning, starting with targets such as "find a colored box".
 - Safety gating for robot motion commands before autonomous control is enabled.
+- Three-column workspace: reduced camera/video area, middle task/autopilot column, and right status/control cards.
+- Robot task mode card with `Autopilot` and `Mission` mode buttons plus Start/Stop icon.
+- Bird's-eye view card for autonomous driving visualization.
+- OpenCV.js lane detection for deterministic lane-following in Autopilot mode.
+- YOLO object projection into the bird's-eye view.
+- LLM mission payload schema for short adjustable-duration action plans.
+- Browser controller that expands mission actions into repeated 30ms V7RC `SRT` frames.
 
 ### Out of Scope for MVP
 
@@ -50,6 +59,9 @@ Create a Docker-packaged Next.js web app that runs in Chrome, opens a webcam or 
 - Unbounded autonomous motion without command rate limits, neutral timeout, and emergency stop.
 - Full manipulation planning or inverse kinematics for the arm.
 - SLAM, mapping, or persistent world modeling.
+- Full road-scene semantic segmentation.
+- GPS navigation or outdoor route planning.
+- Long-horizon LLM motion plans that bypass local safety checks.
 
 ## Proposed System Architecture
 
@@ -61,8 +73,12 @@ Chrome
   ├─ Canvas overlay
   ├─ YOLO ONNX inference: ONNX Runtime Web
   ├─ ByteTrack tracker: TypeScript
+  ├─ OpenCV.js lane detection: Web Worker / WASM
+  ├─ Bird's-eye view renderer: perspective transform + projected tracks
   ├─ Gemma4-E2B inference: WebGPU browser runtime
-  ├─ Goal loop: perception summary + target state + action JSON
+  ├─ Task mode: Autopilot / Mission
+  ├─ Goal loop: perception summary + target state + short action JSON
+  ├─ Mission action sequencer: JSON actions -> 30ms command samples
   ├─ Web Bluetooth transport: V7RC robot connection
   ├─ V7RC protocol encoder: channel frame + safety envelope
   ├─ Browser cache: model artifacts
@@ -111,6 +127,115 @@ Web Bluetooth
   └─ Sends V7RC protocol frames to the robot
 ```
 
+### Workspace Layout MVP
+
+The main workspace should become a three-column operational console:
+
+| Column | Width | Contents |
+| --- | --- | --- |
+| Left | Remaining flexible width | Reduced 16:9 camera/video stage with YOLO/ByteTrack overlay and Gemma transcript below. |
+| Middle | Same width as the right cards | Robot Task card and Bird's-Eye View card. |
+| Right | Existing card width | Camera, YOLO11n, Gemma4-E2B, Robot/V7RC, and Tracked Objects cards. |
+
+The middle column is where robot behavior is selected and observed. It should not hide camera safety information, and it should keep the Start/Stop task action close to the selected mode.
+
+### Robot Task Card
+
+Robot task card controls:
+
+- Mode segmented buttons:
+  - `Autopilot`: lane-following with deterministic OpenCV.js logic.
+  - `Mission`: goal solving through Gemma JSON payloads and the local safety controller.
+- Start/Stop icon button on the right side of the selected mode row.
+- Current task status: idle, running, complete, blocked, unsafe, error.
+- Last task message.
+- Current command plan preview if Mission mode is active.
+
+### Bird's-Eye View Card
+
+The bird's-eye view card should show:
+
+- Perspective-transformed lane/ground plane.
+- Detected lane lines or lane polygon.
+- YOLO/ByteTrack objects projected into the top-down view.
+- Object labels and track IDs.
+- Planned motion vector or current steering/throttle cue.
+- Safety state, such as obstacle stop, no lane, or target acquired.
+
+For the first pass, object projection can use the bottom-center point of each YOLO box and apply the same homography used by the lane transform. This is an approximation, but it is useful enough for visualization and deterministic obstacle rules.
+
+### OpenCV.js Lane Following
+
+Use OpenCV.js as the browser OpenCV runtime. The official OpenCV.js distribution provides JavaScript/WebAssembly bindings accessed through `cv`. For production, self-host a pinned OpenCV.js artifact instead of loading from a CDN.
+
+Lane detection pipeline:
+
+1. Read the current camera frame into an OpenCV Mat.
+2. Crop a road/ground ROI.
+3. Apply perspective transform to create a bird's-eye view.
+4. Use color thresholding for lane colors and/or grayscale thresholding.
+5. Blur and run Canny.
+6. Extract lane candidates using HoughLinesP or contour/sliding-window logic.
+7. Estimate lane center and heading.
+8. Render lane overlay on both the camera view and bird's-eye view.
+9. Produce a steering suggestion for the safety controller.
+
+Initial Autopilot rule:
+
+- Valid lane and clear path: forward at 50% power.
+- Lane offset: proportional steering.
+- Obstacle, person near path, missing lane, stale frame, or command timeout: stop/neutral.
+- YOLO/ByteTrack safety rules override lane-follow output.
+
+### Mission JSON Payload
+
+Mission mode should ask Gemma to generate short action plans. The controller expands those actions into repeated 30ms V7RC `SRT` commands.
+
+Recommended payload:
+
+```json
+{
+  "version": 1,
+  "message": "移動搜尋物體",
+  "missionStatus": "running",
+  "planDurationMs": 2000,
+  "actions": [
+    { "move": "forward", "ms": 300, "power": 0.35 },
+    { "move": "turn_right", "ms": 500, "power": 0.25 },
+    { "move": "forward", "ms": 1200, "power": 0.35 },
+    { "move": "stop", "ms": 300 }
+  ]
+}
+```
+
+Changes from the original draft:
+
+- Use `forward`, not `foward`.
+- Use milliseconds as numbers in `ms`.
+- Make `stop` an action with an explicit duration.
+- Add `version`, `missionStatus`, and `planDurationMs`.
+- Add optional `power` so the safety controller can clamp low-speed tests.
+
+Allowed `move` values for the first implementation:
+
+- `forward`
+- `backward`
+- `turn_left`
+- `turn_right`
+- `strafe_left`
+- `strafe_right`
+- `stop`
+
+Mission loop rules:
+
+- Gemma only emits JSON, not raw V7RC frames.
+- Payload horizon defaults to 2000ms and should be adjustable.
+- The browser action sequencer slices actions into 30ms command frames.
+- Safety controller can interrupt the sequence at any time.
+- When complete, `message` must include `任務完成` or `mission complete`.
+- If the target is visible, `message` should mention the target and track ID.
+- If the mission cannot continue, `missionStatus` should become `blocked`, `unsafe`, or `failed`, and actions should end in `stop`.
+
 ### Bluetooth Connection
 
 Use Chrome Web Bluetooth for MVP because the app is Chrome-first and robot control should remain local to the browser session.
@@ -136,13 +261,13 @@ Important constraints:
 
 The V7RC IO Command Protocol is a compact command-string protocol designed for BLE packet limits. Commands are 20 bytes or less, the first 3 characters are the command code, and every packet ends with `#`. Unused fields are padded with `0`, while `CMD` uses spaces for padding.
 
-Primary commands for this MVP:
+Protocol commands:
 
-- `HEX`: recommended 16-channel PWM control. Format: `HEX + 16 raw bytes + #`. Payload byte 0 maps to channel 0 and byte 15 maps to channel 15. PWM conversion is `pwm_us = value * 10`, so `100` means `1000 us`, `150` means `1500 us`, and `200` means `2000 us`.
+- `HEX`: full 16-channel PWM control. Format: `HEX + 16 raw bytes + #`. Payload byte 0 maps to channel 0 and byte 15 maps to channel 15. PWM conversion is `pwm_us = value * 10`, so `100` means `1000 us`, `150` means `1500 us`, and `200` means `2000 us`.
 - `DEG`: 16-channel angle control. Format: `DEG + 16 raw bytes + #`. Angle conversion is `degree = value - 127`, so `37` means `-90 deg`, `127` means `0 deg`, and `217` means `90 deg`.
 - `SRV`: basic 4-channel PWM command such as `SRV1500100018002000#`.
 - `SR2`: second PWM group for C5 to C8 on boards that expose more PWM channels.
-- `SRT`: tank mode based on basic PWM, where CH1 and CH2 are converted by firmware into tank-control signals.
+- `SRT`: 4-channel PWM text command. Current drivetrain control uses this path because the user selected SRT for Vehicle, Tank, and Mecanum modes.
 - `CMD`: pass-through device command with up to 16 characters, padded with spaces.
 
 Proposed normalized intent range:
@@ -152,7 +277,15 @@ Proposed normalized intent range:
 - Binary/mode channels: `0` or `1`.
 - All outputs pass through clamping, deadband, slew-rate limits, and neutral fallback.
 
-Initial logical channel map on top of `HEX` channel indices:
+Current `SRT` drivetrain mapping:
+
+| Robot mode | CH0 | CH1 | CH2 | CH3 |
+| --- | --- | --- | --- | --- |
+| Vehicle | Steering wheel | Throttle | Neutral | Neutral |
+| Tank | Turn | Throttle | Neutral | Neutral |
+| Mecanum | Strafe | Throttle | Turn | Neutral |
+
+Older full-channel logical map on top of `HEX` channel indices:
 
 | V7RC channel | Logical meaning | Range | Notes |
 | --- | --- | --- | --- |
@@ -174,16 +307,16 @@ Protocol adapter tasks:
 
 - Use the V7RC BLE UART service UUID and RX/TX characteristics for Web Bluetooth filtering, writes, and notifications.
 - Implement `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` encoders with exact byte-length validation.
-- Keep `HEX` as the first full-channel command path because it controls 16 PWM channels in one 20-byte frame.
-- Confirm whether the target firmware expects `HEX` raw bytes, text commands such as `SRV`, or tank mode `SRT` for drivetrain control.
+- Keep `HEX` available as the later full-channel command path because it controls 16 PWM channels in one 20-byte frame.
+- Confirm target firmware behavior for 30ms `SRT` drivetrain control.
 - Implement a TypeScript encoder/decoder behind a small `V7rcTransport` interface.
 - Add a simulator/mock transport so the perception loop can be tested without a robot.
 
 ### Gemma-Controlled Robot Loop
 
-Gemma must not directly write raw motor values. It should produce structured intent, then a safety controller translates that intent into V7RC channels.
+Gemma must not directly write raw motor values or raw V7RC frames. In Mission mode, it should produce short JSON action plans. The browser action sequencer and safety controller translate those actions into V7RC `SRT` frames.
 
-Recommended Gemma output schema:
+Recommended low-level intent schema for later internal controller use:
 
 ```json
 {
@@ -216,6 +349,8 @@ Recommended Gemma output schema:
 ```
 
 The first implementation should run in "suggestion mode": Gemma proposes actions, the UI displays the translated channel values, but Bluetooth transmission stays disabled until the user enables autonomy. This lets us validate perception and command quality before moving hardware.
+
+For the next Mission-mode MVP, prefer the short action-plan payload described above instead of asking Gemma for continuous low-level intent values. The low-level intent schema can remain useful as an internal representation after JSON validation and safety clamping.
 
 ### Goal Definition and Closed Loop
 
