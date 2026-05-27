@@ -254,7 +254,7 @@ export default function Home() {
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
-      return "OpenCV lane-follow pipeline pending; YOLO safety stop remains active.";
+      return "Calibrated lane guide active; OpenCV lane extraction is next. YOLO safety stop remains active.";
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
@@ -1104,6 +1104,7 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
+        drawCameraLaneGuide(context, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
         drawDetections(context, tracksRef.current, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
         context.restore();
 
@@ -2046,6 +2047,15 @@ function drawBirdsEyeView(
   context.lineWidth = 1;
   context.stroke();
 
+  context.strokeStyle = "#facc15";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo((width - roadTopWidth) / 2, roadTopY);
+  context.lineTo((width - roadBottomWidth) / 2, roadBottomY);
+  context.moveTo((width + roadTopWidth) / 2, roadTopY);
+  context.lineTo((width + roadBottomWidth) / 2, roadBottomY);
+  context.stroke();
+
   context.setLineDash([10, 10]);
   context.strokeStyle = "rgba(226, 232, 240, 0.5)";
   context.beginPath();
@@ -2090,6 +2100,42 @@ function drawBirdsEyeView(
   }
 }
 
+function drawCameraLaneGuide(
+  context: CanvasRenderingContext2D,
+  source: DetectableSource,
+  stageWidth: number,
+  stageHeight: number,
+  mirrorPreview: boolean,
+) {
+  const points = sourceCalibrationToStagePoints(source, stageWidth, stageHeight, mirrorPreview);
+
+  context.save();
+  context.fillStyle = "rgba(250, 204, 21, 0.09)";
+  context.strokeStyle = "rgba(250, 204, 21, 0.72)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(points.topLeft.x, points.topLeft.y);
+  context.lineTo(points.topRight.x, points.topRight.y);
+  context.lineTo(points.bottomRight.x, points.bottomRight.y);
+  context.lineTo(points.bottomLeft.x, points.bottomLeft.y);
+  context.closePath();
+  context.fill();
+  context.stroke();
+
+  context.strokeStyle = "rgba(45, 212, 191, 0.82)";
+  context.setLineDash([10, 8]);
+  context.beginPath();
+  context.moveTo((points.topLeft.x + points.topRight.x) / 2, (points.topLeft.y + points.topRight.y) / 2);
+  context.lineTo((points.bottomLeft.x + points.bottomRight.x) / 2, (points.bottomLeft.y + points.bottomRight.y) / 2);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = "rgba(250, 204, 21, 0.9)";
+  context.font = "12px ui-sans-serif, system-ui";
+  context.fillText("lane guide", points.topLeft.x + 8, points.topLeft.y - 8);
+  context.restore();
+}
+
 function projectTrackToBirdView(
   track: Track,
   width: number,
@@ -2119,12 +2165,12 @@ function projectTrackToBirdView(
 }
 
 const birdViewSourceCalibration = {
-  bottomLeftX: 0.08,
-  bottomRightX: 0.92,
-  bottomY: 0.92,
-  topLeftX: 0.42,
-  topRightX: 0.58,
-  topY: 0.56,
+  bottomLeftX: 0.16,
+  bottomRightX: 0.86,
+  bottomY: 0.93,
+  topLeftX: 0.44,
+  topRightX: 0.56,
+  topY: 0.62,
 };
 
 function sourceRoadAtY(normalizedY: number) {
@@ -2138,6 +2184,36 @@ function sourceRoadAtY(normalizedY: number) {
     right:
       birdViewSourceCalibration.topRightX +
       (birdViewSourceCalibration.bottomRightX - birdViewSourceCalibration.topRightX) * depth,
+  };
+}
+
+function sourceCalibrationToStagePoints(
+  source: DetectableSource,
+  stageWidth: number,
+  stageHeight: number,
+  mirrorPreview: boolean,
+) {
+  const dimensions = getSourceDimensions(source);
+  const videoRatio = dimensions.width / dimensions.height;
+  const stageRatio = stageWidth / stageHeight;
+  const drawWidth = stageRatio > videoRatio ? stageHeight * videoRatio : stageWidth;
+  const drawHeight = stageRatio > videoRatio ? stageHeight : stageWidth / videoRatio;
+  const offsetX = (stageWidth - drawWidth) / 2;
+  const offsetY = (stageHeight - drawHeight) / 2;
+
+  const toStagePoint = (x: number, y: number) => {
+    const stageX = offsetX + x * drawWidth;
+    return {
+      x: mirrorPreview ? stageWidth - stageX : stageX,
+      y: offsetY + y * drawHeight,
+    };
+  };
+
+  return {
+    bottomLeft: toStagePoint(birdViewSourceCalibration.bottomLeftX, birdViewSourceCalibration.bottomY),
+    bottomRight: toStagePoint(birdViewSourceCalibration.bottomRightX, birdViewSourceCalibration.bottomY),
+    topLeft: toStagePoint(birdViewSourceCalibration.topLeftX, birdViewSourceCalibration.topY),
+    topRight: toStagePoint(birdViewSourceCalibration.topRightX, birdViewSourceCalibration.topY),
   };
 }
 
