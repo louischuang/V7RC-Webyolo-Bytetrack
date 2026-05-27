@@ -1,247 +1,295 @@
 # TODO.md
 
+## Current Status
+
+The MVP is now a working Chrome-first local perception app:
+
+- Camera/MJPG/RTSP/YouTube source selection is implemented.
+- YOLO11n ONNX detection runs in Chrome through ONNX Runtime Web.
+- ByteTrack runs in browser TypeScript and produces stable track IDs.
+- Canvas overlay, object list, FPS, YOLO timing, and ByteTrack timing are visible.
+- Gemma4-E2B runs in browser through Transformers.js/Web Worker with optional current-frame image context.
+- Docker packaging is implemented with host-mounted model volumes.
+- `stream-gateway` supports RTSP/YouTube conversion with MJPG/HLS/MP4 outputs.
+- V7RC mock/Web Bluetooth transport exists.
+- Robot card supports Vehicle, Mecanum, and Tank modes.
+- Robot command preview uses 4-channel `SRT` PWM frames.
+- Connected robot transports send the current `SRT` command every 30ms.
+
 ## Phase 0 - Project Bootstrap
 
-- [ ] Create Next.js TypeScript app structure.
-- [ ] Add ESLint and formatting setup.
-- [ ] Add Dockerfile.
-- [ ] Add Docker Compose example.
-- [ ] Add `.env.example`.
-- [ ] Add basic README with local and Docker startup commands.
+- [x] Create Next.js TypeScript app structure.
+- [x] Add ESLint setup.
+- [x] Add Dockerfile.
+- [x] Add Docker Compose example.
+- [x] Add `.env.example`.
+- [x] Add README with local, Docker, model, stream gateway, and robot notes.
+- [x] Add AGENTS.md, MVP.md, TODO.md, and technical docs.
 
 ## Phase 1 - UI Shell
 
-- [ ] Build app layout with top menu, camera area, object list, and chat area.
-- [ ] Add responsive layout for desktop and laptop screens.
-- [ ] Add status indicators for camera, YOLO, tracker, and LLM.
-- [ ] Add browser model download progress UI.
-- [ ] Add metrics widgets for FPS, YOLO time, and ByteTrack time.
-- [x] Move camera/source controls from the top menu into a dedicated Camera card above the YOLO11n card in the right panel.
-- [x] Show the active camera/source name and Start/Stop action directly on the Camera card.
-- [x] Add a Camera card settings icon that opens a settings panel.
-- [x] In the Camera settings panel, support source selection for Camera, MJPG, RTSP, and YouTube.
-- [x] In the Camera settings panel, support detailed per-source settings such as camera device, mirror mode, MJPG URL, RTSP URL, YouTube URL, YouTube output mode, gateway status, refresh devices, and preflight checks.
-- [x] Keep the top menu focused on global status and metrics after moving camera/source controls into the Camera card.
+- [x] Build app layout with top menu, video area, object list, Gemma transcript, and right-side control cards.
+- [x] Add responsive layout for desktop and laptop screens.
+- [x] Keep video at the top in a 16:9 stage with Gemma transcript below it.
+- [x] Add status indicators for camera, gateway, YOLO, tracker, LLM, and robot.
+- [x] Add browser model download progress UI.
+- [x] Add metrics widgets for FPS, YOLO time, and ByteTrack time.
+- [x] Move camera/source controls into a dedicated Camera card above the YOLO11n card.
+- [x] Add Camera settings modal with Camera/MJPG/RTSP/YouTube source options.
+- [x] Add Gemma settings modal with include-frame, system prompt, and fixed prompt settings.
+- [x] Cache Gemma prompt/settings in browser `localStorage`.
+- [ ] Add a compact robot safety/command-rate metric strip.
 
-## Phase 2 - Camera
+## Phase 2 - Camera And Sources
 
-- [ ] Implement camera permission request.
-- [ ] Implement `enumerateDevices()` camera listing.
-- [ ] Implement camera selector.
-- [ ] Implement start/stop camera.
-- [ ] Handle camera switching without page reload.
-- [ ] Confirm Mac built-in camera support.
-- [ ] Confirm iPhone Continuity Camera appears as a selectable camera on macOS when configured.
-- [ ] Add clear errors for blocked permission, missing camera, or insecure origin.
-
-## Phase 2.5 - Stream Sources
-
+- [x] Implement camera permission request.
+- [x] Implement `enumerateDevices()` camera listing.
+- [x] Implement camera selector.
+- [x] Implement start/stop camera.
+- [x] Handle camera switching without page reload.
+- [x] Add mirror mode for MacBook/iPhone front cameras.
+- [x] Add iPhone Continuity Camera label detection and selection support when macOS exposes it.
+- [x] Add clear errors for blocked permission, missing camera, or insecure origin.
 - [x] Add source selector for Camera, MJPG, RTSP, and YouTube.
-- [x] Keep Camera mode on `getUserMedia()`.
 - [x] Add MJPG URL input and raw `<img>` stream surface.
-- [x] Add RTSP URL input and document that native `rtsp://` requires gateway conversion for Chrome.
-- [x] Add YouTube URL input and document that watch URLs require gateway conversion for Chrome/canvas access.
-- [x] Route camera, video URL, and MJPG image sources through the same YOLO/ByteTrack pipeline.
-- [x] Capture the active source frame for Gemma multimodal prompts.
-- [x] Add source-specific startup and error messages.
-- [x] Add source deep links with optional autostart for unattended Chrome tests and robot launch flows.
-- [ ] Validate CORS behavior for MJPG/HLS streams because canvas capture requires readable media.
-- [ ] Add tests or manual validation notes for camera, MJPG, HLS URL, and RTSP gateway URL.
-- [x] Validate YouTube gateway URL in Chrome with Docker web, YOLO11n WebGPU, and ByteTrack.
+- [x] Add RTSP URL input and gateway guidance.
+- [x] Add YouTube URL input and gateway guidance.
+- [x] Route camera, video URL, HLS/MP4, and MJPG image sources through the same YOLO/ByteTrack pipeline.
+- [x] Capture active source frames for Gemma multimodal prompts.
+- [x] Add source deep links with optional autostart.
+- [x] Validate YouTube gateway URL in Chrome with Docker web, YOLO11n, and ByteTrack.
+- [ ] Validate CORS behavior for external MJPG/HLS streams because canvas capture requires readable media.
+- [ ] Add manual validation notes for Camera, MJPG, HLS, MP4, RTSP gateway, and YouTube gateway paths.
 
-## Phase 2.6 - Stream Gateway MVP
+## Phase 3 - Stream Gateway
 
 - [x] Add `stream-gateway` service to Docker Compose.
-- [x] Choose first gateway backend: ffmpeg, GStreamer, or MediaMTX.
-- [x] Define gateway API contract for creating/stopping streams.
-- [x] Add RTSP input support.
-- [x] Add YouTube input support through `yt-dlp` plus ffmpeg when allowed by deployment policy.
-- [x] Add YouTube URL preflight check through `yt-dlp`.
+- [x] Implement gateway API for creating, stopping, and inspecting stream sessions.
+- [x] Add RTSP input support through ffmpeg.
+- [x] Add YouTube input support through `yt-dlp` plus ffmpeg.
+- [x] Add YouTube URL preflight check.
 - [x] Add configurable YouTube resolver format, timeout, cookies file, and user-agent.
-- [x] Output MJPG endpoint for fastest YOLO/canvas integration.
-- [x] Output HLS endpoint for lower bandwidth and better browser compatibility.
-- [x] Add frontend HLS playback for gateway sources.
-- [x] Add YouTube MP4 gateway output for faster Chrome playback.
-- [x] Add YouTube MP4/HLS output selector in the source controls.
-- [x] Store temporary HLS segments outside the app image.
+- [x] Add MJPG output.
+- [x] Add HLS output.
+- [x] Add MP4 output for YouTube playback.
+- [x] Add frontend HLS playback through `hls.js`.
+- [x] Add YouTube MP4/HLS output selector.
+- [x] Store temporary stream artifacts outside the app image.
 - [x] Add stream lifecycle cleanup for stopped or stale sessions.
-- [x] Add healthcheck endpoint for the gateway.
-- [x] Add clear UI errors when conversion fails, URL is unreachable, or the stream codec is unsupported.
+- [x] Add gateway healthcheck endpoint and Docker healthcheck.
 - [x] Add gateway session status endpoint with masked input URL and recent logs.
 - [x] Poll active gateway session status from the frontend.
-- [x] Document that WebRTC is the later low-latency path for robot closed-loop control.
+- [x] Document WebRTC as the later low-latency path.
 - [ ] Benchmark RTSP->MJPG latency and CPU load.
 - [ ] Benchmark RTSP->HLS latency and CPU load.
-- [ ] Decide whether the first production robot target should use MJPG, HLS, or WebRTC.
+- [ ] Decide whether the first production robot camera target should use MJPG, HLS, MP4, or WebRTC.
 
-## Phase 3 - Video Overlay
+## Phase 4 - Video Overlay
 
-- [ ] Add video element and overlay canvas.
-- [ ] Synchronize canvas size with displayed video size.
-- [ ] Implement coordinate scaling from model input space to displayed video space.
-- [ ] Draw bounding boxes.
-- [ ] Draw class labels, confidence, and track IDs.
-- [ ] Ensure overlay remains aligned after window resize.
+- [x] Add video/image source surface and overlay canvas.
+- [x] Synchronize canvas size with displayed video/image size.
+- [x] Implement coordinate scaling from source/model space to displayed video space.
+- [x] Draw bounding boxes.
+- [x] Draw class labels, confidence, and track IDs.
+- [x] Use matching label background and box colors.
+- [x] Keep label background width aligned with the box width.
+- [x] Use black label text.
+- [x] Ensure overlay remains aligned after window resize.
+- [x] Remove unnecessary overlay-ready visual noise.
 
-## Phase 4 - YOLO Browser Inference
+## Phase 5 - YOLO Browser Inference
 
-- [ ] Use `YOLO11n` detection as the MVP model.
-- [ ] Export `yolo11n.pt` to ONNX with fixed 640 input.
-- [ ] Keep `YOLOv8n` as a compatibility fallback only.
-- [ ] Add model and labels loading flow.
-- [ ] Add ONNX Runtime Web.
-- [ ] Configure WebGPU execution provider when available.
-- [ ] Configure WASM fallback.
-- [ ] Implement frame preprocessing.
-- [ ] Implement YOLO output decoding.
-- [ ] Implement confidence filtering.
-- [ ] Implement non-maximum suppression.
-- [ ] Add detection loop with configurable frame interval.
-- [ ] Record YOLO inference time.
-- [ ] Add tests for detection decoding and NMS.
-- [ ] Add a later benchmark task for YOLO11n TFLite/LiteRT Web.
-- [ ] Add a later benchmark task for YOLO11s ONNX quality/performance comparison.
+- [x] Use `YOLO11n` detection as the MVP model.
+- [x] Add YOLO11n ONNX preparation script.
+- [x] Keep `YOLOv8n` as a compatibility fallback path only.
+- [x] Add model and label loading flow.
+- [x] Add ONNX Runtime Web.
+- [x] Configure WebGPU execution provider when available.
+- [x] Configure WASM fallback.
+- [x] Implement frame preprocessing.
+- [x] Implement YOLO output decoding.
+- [x] Implement confidence filtering.
+- [x] Implement non-maximum suppression.
+- [x] Add detection loop with configurable frame interval.
+- [x] Record YOLO inference time.
+- [x] Keep YOLO active while Gemma is generating.
+- [ ] Add unit tests for detection decoding and NMS.
+- [ ] Add benchmark task for YOLO11n TFLite/LiteRT Web.
+- [ ] Add benchmark task for YOLO11s ONNX quality/performance comparison.
+- [ ] Add safety event rules derived directly from YOLO/ByteTrack, independent of LLM output.
 
-## Phase 5 - ByteTrack
+## Phase 6 - ByteTrack
 
-- [ ] Implement bounding box and detection types.
-- [ ] Implement IoU calculation.
-- [ ] Implement track state model.
-- [ ] Implement high-score matching.
-- [ ] Implement low-score matching.
-- [ ] Implement lost-track buffer.
-- [ ] Implement removed-track cleanup.
-- [ ] Preserve stable IDs across frames.
-- [ ] Record ByteTrack processing time.
-- [ ] Add tests for IoU, matching, and track lifecycle.
+- [x] Implement bounding box and detection types.
+- [x] Implement IoU calculation.
+- [x] Implement track state model.
+- [x] Implement high-score matching.
+- [x] Implement low-score matching.
+- [x] Implement lost-track buffer.
+- [x] Implement removed-track cleanup.
+- [x] Improve matching to reduce ID switches during object crossing.
+- [x] Preserve stable IDs across frames as much as the current IoU/velocity model allows.
+- [x] Record ByteTrack processing time.
+- [ ] Add unit tests for IoU, matching, and track lifecycle.
+- [ ] Evaluate Kalman-filter based prediction if ID switches remain too frequent.
 
-## Phase 6 - Object List
+## Phase 7 - Object List
 
-- [ ] Render current active tracks.
-- [ ] Show object name.
-- [ ] Show track ID.
-- [ ] Show confidence.
-- [ ] Show last seen age.
-- [ ] Sort by most recently updated.
-- [ ] Remove stale objects when tracks are removed.
+- [x] Render current active tracks.
+- [x] Show object name.
+- [x] Show track ID.
+- [x] Show confidence.
+- [x] Show last seen age/missed frames.
+- [x] Remove stale objects when tracks are removed.
+- [ ] Sort by most recently updated or highest safety priority.
+- [ ] Add optional class filters for robot-relevant objects.
 
-## Phase 7 - Browser-Local Gemma4-E2B Chat
+## Phase 8 - Browser-Local Gemma4-E2B
 
-- [ ] Add chat transcript component.
-- [ ] Add text input and send action.
-- [ ] Add "include current frame" option.
-- [ ] Capture current video frame as image data when requested.
-- [ ] Choose browser runtime: Transformers.js, WebLLM, MLC WebLLM, or another WebGPU-capable runtime.
-- [ ] Choose browser-ready Gemma4-E2B-it artifact.
-- [ ] Implement browser-side model loader.
-- [ ] Implement model download progress and cache status.
-- [ ] Implement WebGPU capability detection.
-- [ ] Implement memory/error diagnostics for unsupported devices.
-- [ ] Make `NEXT_PUBLIC_LLM_RUNTIME`, `NEXT_PUBLIC_LLM_DEVICE`, `NEXT_PUBLIC_LLM_MODEL_ID`, `NEXT_PUBLIC_LLM_MODEL_URL`, and generation settings configurable.
-- [ ] Add a safety-first scheduler that keeps YOLO/ByteTrack active even when Gemma is slow.
-- [ ] Show loading and error states.
-- [ ] Verify `google/gemma-4-E2B-it` or its browser-ready quantized derivative inside Chrome.
-- [ ] Confirm chat requests do not call a server-side LLM API.
+- [x] Add Gemma transcript panel below the video.
+- [x] Replace manual prompt send UI with Start/Stop loop controls.
+- [x] Add response count and last inference time in the transcript footer.
+- [x] Auto-scroll transcript to the latest response.
+- [x] Add include-current-frame option.
+- [x] Capture current source frame as image data when requested.
+- [x] Use browser-local Transformers.js Gemma4-E2B ONNX as the default runtime.
+- [x] Keep WebLLM/MLC path as an optional experimental runtime.
+- [x] Choose browser-ready Gemma4-E2B-it ONNX artifact.
+- [x] Implement browser-side model loader.
+- [x] Implement model download progress and cache status.
+- [x] Implement WebGPU capability detection.
+- [x] Implement memory/error diagnostics for unsupported devices where available.
+- [x] Make `NEXT_PUBLIC_LLM_RUNTIME`, `NEXT_PUBLIC_LLM_DEVICE`, `NEXT_PUBLIC_LLM_MODEL_ID`, `NEXT_PUBLIC_LLM_MODEL_URL`, token, temperature, frame-size, and loop-delay settings configurable.
+- [x] Add safety-first scheduling rule: YOLO/ByteTrack stay active even when Gemma is slow.
+- [x] Default Gemma to WASM worker mode so the LLM does not compete with YOLO for WebGPU.
+- [x] Confirm chat requests do not call a server-side LLM API.
+- [x] Remove temporary Gemma test prompt buttons.
+- [ ] Verify Gemma4-E2B WASM worker behavior on the production Chrome machine.
+- [ ] Add cancellable/interruptible Gemma generation.
+- [ ] Add streaming partial Gemma output if the selected runtime supports it reliably.
 
-## Phase 8 - External Model Storage
+## Phase 9 - External Model Storage
 
-- [ ] Decide host model directory layout.
-- [ ] Add scripts or docs for downloading YOLO model outside the app image.
-- [ ] Add scripts or docs for downloading browser-ready `google/gemma-4-E2B-it` artifacts outside the app image.
-- [ ] Add Docker volume mappings.
-- [ ] Verify container can access YOLO public model files.
-- [ ] Verify container can serve Gemma4-E2B browser artifacts as static files when using host-mounted models.
-- [ ] Verify Chrome can download/cache model artifacts from the app.
+- [x] Decide host model directory layout.
+- [x] Add scripts/docs for downloading YOLO model outside the app image.
+- [x] Add scripts/docs for downloading browser-ready Gemma4-E2B artifacts outside the app image.
+- [x] Add Docker volume mapping from `./models` to `/app/public/models`.
+- [x] Verify container can serve YOLO public model files through mounted models.
+- [x] Document that model files belong in browser cache/host volumes, not JavaScript `localStorage`.
+- [ ] Verify production host can serve the full Gemma4-E2B artifact from mounted static files.
+- [ ] Add checksum/version manifest for model artifacts.
 
-## Phase 9 - Docker Production
+## Phase 10 - Docker Production
 
-- [ ] Build Next.js standalone output.
-- [ ] Create production Docker image.
-- [ ] Create Docker Compose production example.
+- [x] Build Next.js standalone output.
+- [x] Create production Docker image.
+- [x] Create Docker Compose example.
 - [x] Add optional stream-gateway container to Docker Compose.
-- [x] Add gateway environment variables for allowed inputs, output mode, and segment directory.
-- [ ] Add healthcheck endpoint.
+- [x] Add gateway environment variables for allowed inputs, output mode, resolver settings, and segment directory.
 - [x] Add stream-gateway healthcheck.
-- [ ] Verify app starts in container.
-- [ ] Verify gateway starts in container.
-- [ ] Verify camera works from Chrome against container-hosted app.
-- [ ] Verify MJPG source works against container-hosted app.
-- [ ] Verify RTSP gateway source works against container-hosted app.
+- [x] Verify app starts in container.
+- [x] Verify gateway starts in container.
 - [x] Verify YouTube HLS gateway source works against container-hosted app when policy allows.
 - [x] Verify YouTube MP4 gateway source works against container-hosted app when policy allows.
+- [ ] Add web app healthcheck.
+- [ ] Verify camera works from Chrome against container-hosted app on the production host.
+- [ ] Verify MJPG source works against container-hosted app on the production host.
+- [ ] Verify RTSP gateway source works against container-hosted app with a real RTSP source.
 - [ ] Verify Gemma4-E2B runs in Chrome against container-hosted static model artifacts.
 
-## Phase 10 - Validation
+## Phase 11 - Validation
 
-- [ ] Run lint.
-- [ ] Run unit tests.
-- [ ] Run production build.
-- [ ] Test in Chrome on localhost.
-- [ ] Test with built-in Mac camera.
-- [ ] Test with iPhone Continuity Camera if available.
-- [ ] Test with direct MJPG URL.
-- [ ] Test with gateway-converted RTSP URL.
+- [x] Run lint after major changes.
+- [x] Run production build after major changes.
+- [x] Smoke-test Docker web at `localhost:3003`.
+- [x] Test with built-in Mac camera.
 - [x] Test with gateway-converted YouTube HLS URL.
 - [x] Test with gateway-converted YouTube MP4 URL.
+- [x] Test YOLO11n ONNX detection in Chrome.
+- [x] Test ByteTrack overlay and object list in Chrome.
+- [x] Test Gemma response loop enough to identify runtime/contention issues.
+- [ ] Add unit test runner and pure-logic tests.
+- [ ] Test with iPhone Continuity Camera if available in Chrome.
+- [ ] Test with direct MJPG URL.
+- [ ] Test with gateway-converted RTSP URL.
 - [ ] Test with detection enabled for at least 10 minutes.
-- [ ] Check memory growth during long-running detection.
+- [ ] Check memory growth during long-running detection and Gemma loops.
 - [ ] Confirm no remote network calls are required for inference after models are installed.
-- [ ] Confirm chat inference does not call a backend API.
 
-## Phase 11 - V7RC Protocol Planning
+## Phase 12 - V7RC Protocol
 
 - [x] Collect the current V7RC firmware/protocol specification.
-- [x] Confirm BLE service UUID, command characteristic UUID, notification characteristic UUID, and write mode.
-- [ ] Confirm effective MTU and command pacing limits on the target robot firmware.
+- [x] Confirm BLE service UUID, RX command characteristic UUID, TX notification characteristic UUID, and write mode.
 - [x] Document V7RC command rules: 20-byte maximum, 3-character command code, `#` ending marker, and padding behavior.
 - [x] Document `HEX` 16-channel PWM format and `pwm_us = value * 10` conversion.
 - [x] Document `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` command options.
-- [ ] Confirm whether the robot firmware expects `HEX`, `SRV`, or `SRT` for drivetrain control.
-- [ ] Define normalized channel value ranges for motion, arm servos, binary modes, neutral, and emergency stop.
+- [x] Create TypeScript V7RC protocol encoder helpers.
+- [x] Add `SRT` encoder path for 4-channel PWM control.
+- [x] Add vehicle, mecanum, and tank SRT channel mappings.
+- [x] Define current drivetrain channel semantics:
+  - Vehicle: `CH0` steering, `CH1` throttle.
+  - Tank: `CH0` turn, `CH1` throttle.
+  - Mecanum: `CH0` strafe, `CH1` throttle, `CH2` turn.
+- [x] Add neutral PWM behavior for unused channels.
+- [x] Add mock V7RC transport for UI and loop testing without hardware.
+- [ ] Confirm effective MTU and command pacing limits on target firmware.
+- [ ] Confirm target firmware expects `SRT` for drivetrain control.
 - [ ] Confirm channel calibration for the first robot chassis and arm hardware.
-- [ ] Document final channel semantics for drivetrain, speed scale, arm joints, gripper/tool, autonomy enable, neutral, and e-stop.
-- [ ] Define neutral frame and command timeout behavior.
-- [ ] Define command rate limit and slew-rate limits for safe acceleration.
+- [ ] Define command timeout behavior in firmware and UI.
+- [ ] Define slew-rate limits for safe acceleration.
 - [ ] Define how firmware reports low battery, failsafe, or command rejection if supported.
-- [x] Create a TypeScript `V7rcProtocol` encoder module.
-- [ ] Add V7RC decoder/parsing support if TX notifications expose structured firmware replies.
+- [ ] Add V7RC decoder/parsing support if TX notifications expose structured replies.
 - [ ] Add unit tests for `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, `CMD`, packet length validation, and channel clamping.
-- [x] Add a mock V7RC transport for UI and Gemma loop testing without hardware.
 
-## Phase 12 - Web Bluetooth Robot Link
+## Phase 13 - Web Bluetooth Robot Link
 
 - [x] Add Robot status card to the UI.
-- [x] Add `Connect Robot` path using Chrome Web Bluetooth.
+- [x] Add Mock transport connection path.
+- [x] Add Chrome Web Bluetooth connection path.
 - [x] Add `Disconnect`, `Neutral`, and `E-stop` controls.
 - [x] Show device name, connection state, last packet, and last protocol error.
 - [x] Document V7RC BLE UART UUIDs for service, RX, and TX characteristics.
 - [x] Implement Bluetooth device filtering with service UUID `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`.
-- [ ] Implement manual service/characteristic configuration fallback for firmware variants.
 - [x] Implement command characteristic writer.
 - [x] Implement notification reader scaffold for acknowledgements or telemetry.
 - [x] Send neutral frame when disconnecting.
+- [x] Send current `SRT` command every 30ms while connected.
+- [x] Throttle UI status updates during the 30ms command loop.
+- [ ] Test 30ms BLE command loop with real V7RC hardware.
 - [ ] Send neutral frame when the tab unloads or the perception loop stops.
 - [ ] Add reconnection and stale connection error handling.
+- [ ] Add manual service/characteristic configuration fallback for firmware variants.
 - [ ] Add Chrome secure-context guidance for production HTTPS deployment.
 
-## Phase 13 - Gemma Robot Action Loop
+## Phase 14 - Gemma Robot Action Loop
 
 - [ ] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
 - [ ] Add a goal editor for target object, target color, success condition, and safety constraints.
-- [ ] Add "suggestion mode" where Gemma proposes commands but Bluetooth transmission is disabled.
-- [ ] Update the Gemma system prompt to require strict action JSON.
+- [ ] Keep suggestion mode as the default: Gemma proposes actions, but hardware control remains gated.
+- [ ] Update Gemma system prompt to require strict action JSON.
 - [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
-- [ ] Add current track summary, target color hints, and recent command state to the Gemma prompt.
+- [ ] Add current track summary, target color hints, recent command state, and drive mode to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
-- [x] Add vehicle, mecanum, and tank SRT channel mappings for the current robot command state.
-- [x] Send the current V7RC SRT command every 30ms while connected.
 - [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
 - [ ] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
-- [x] Add command preview UI showing proposed channel values before hardware transmission.
 - [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
-- [ ] Store goal/prompt/control settings in browser local storage.
+- [ ] Store goal/control settings in browser local storage.
 
-## Phase 14 - Closed-Loop Goal Execution
+## Phase 15 - Safety Controller
+
+- [ ] Implement a safety layer that can stop the robot without waiting for LLM output.
+- [ ] Convert YOLO/ByteTrack observations into deterministic hazard states.
+- [ ] Stop or slow down when a person is detected near the path.
+- [ ] Stop when target confidence drops below threshold for multiple frames.
+- [ ] Add obstacle distance/size heuristics from bounding boxes.
+- [ ] Add manual override that immediately disables autonomy and sends neutral.
+- [ ] Add command timeout watchdog.
+- [ ] Add max-speed, max-turn, and max-strafe limits by drive mode.
+- [ ] Add slew-rate limiting for all motion channels.
+- [ ] Add explicit armed/autonomy gate before non-neutral commands can reach hardware.
+- [ ] Add emergency stop state that requires user reset.
+
+## Phase 16 - Closed-Loop Goal Execution
 
 - [ ] Implement first goal template: find a colored box.
 - [ ] Implement search state: slow rotate/scan until a candidate target appears.
@@ -250,9 +298,6 @@
 - [ ] Implement align state: reduce speed and center target before stopping.
 - [ ] Implement complete state: send neutral, stop autonomy, and report goal complete.
 - [ ] Implement unsafe state: send neutral/e-stop and require user confirmation.
-- [ ] Stop or slow down when a person is detected near the path.
-- [ ] Stop when target confidence drops below threshold for multiple rounds.
-- [ ] Add manual override that immediately disables autonomy and sends neutral.
 - [ ] Test closed-loop logic entirely in mock transport mode.
 - [ ] Test Bluetooth command transmission with wheels lifted or motors disabled.
 - [ ] Test first low-speed hardware run with a physical colored box target.
@@ -261,7 +306,7 @@
 
 - [ ] Move YOLO inference loop to Web Worker.
 - [ ] Move ByteTrack to Web Worker.
-- [ ] Add WebGPU capability diagnostics.
+- [ ] Add WebGPU capability diagnostics panel.
 - [ ] Add model selection UI.
 - [ ] Add detection class filters.
 - [ ] Add per-class confidence thresholds.
