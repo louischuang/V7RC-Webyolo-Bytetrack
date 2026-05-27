@@ -81,11 +81,13 @@ type RoadCalibration = {
   topY: number;
 };
 type LaneDetection = {
+  birdPaths: NormalizedPoint[][];
   left: NormalizedPoint[][];
-  right: NormalizedPoint[][];
   confidence: number;
   roiConfidence: number;
   road: RoadCalibration;
+  right: NormalizedPoint[][];
+  sourcePaths: NormalizedPoint[][];
   updatedAt: number;
 };
 
@@ -1188,6 +1190,7 @@ export default function Home() {
           roadCalibrationRef.current,
           robotTaskMode,
           robotTaskStatus,
+          source && isSourceReady(source) ? source : null,
         );
       }
 
@@ -2159,6 +2162,7 @@ function drawBirdsEyeView(
   roadCalibration: RoadCalibration,
   taskMode: RobotTaskMode,
   taskStatus: RobotTaskStatus,
+  source: DetectableSource | null,
 ) {
   const { width, height } = canvas;
   context.clearRect(0, 0, width, height);
@@ -2169,18 +2173,28 @@ function drawBirdsEyeView(
   context.fillStyle = gradient;
   context.fillRect(0, 0, width, height);
 
-  const roadTopWidth = width * 0.34;
+  const roadTopWidth = width * 0.82;
   const roadBottomWidth = width * 0.82;
   const roadTopY = height * 0.12;
   const roadBottomY = height * 0.94;
+  const destinationRoad = {
+    bottomWidth: roadBottomWidth,
+    bottomY: roadBottomY,
+    topWidth: roadTopWidth,
+    topY: roadTopY,
+  };
   context.beginPath();
   context.moveTo((width - roadTopWidth) / 2, roadTopY);
   context.lineTo((width + roadTopWidth) / 2, roadTopY);
   context.lineTo((width + roadBottomWidth) / 2, roadBottomY);
   context.lineTo((width - roadBottomWidth) / 2, roadBottomY);
   context.closePath();
-  context.fillStyle = "rgba(30, 41, 59, 0.92)";
-  context.fill();
+  if (source && isSourceReady(source)) {
+    drawSourceAsBirdView(context, source, roadCalibration, destinationRoad, width, height);
+  } else {
+    context.fillStyle = "rgba(30, 41, 59, 0.92)";
+    context.fill();
+  }
   context.strokeStyle = "rgba(148, 163, 184, 0.28)";
   context.lineWidth = 1;
   context.stroke();
@@ -2202,12 +2216,7 @@ function drawBirdsEyeView(
   context.stroke();
   context.setLineDash([]);
 
-  drawBirdViewDetectedLane(context, width, height, laneDetection, roadCalibration, {
-    bottomWidth: roadBottomWidth,
-    bottomY: roadBottomY,
-    topWidth: roadTopWidth,
-    topY: roadTopY,
-  });
+  drawBirdViewDetectedLane(context, width, height, laneDetection, destinationRoad);
 
   context.fillStyle = taskStatus === "running" ? "#99f6e4" : "#94a3b8";
   context.font = "12px sans-serif";
@@ -2250,7 +2259,6 @@ function drawBirdViewDetectedLane(
   width: number,
   height: number,
   laneDetection: LaneDetection | null,
-  roadCalibration: RoadCalibration,
   destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
 ) {
   if (!laneDetection || laneDetection.confidence <= 0) {
@@ -2263,13 +2271,79 @@ function drawBirdViewDetectedLane(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const path of [...laneDetection.left, ...laneDetection.right]) {
+  for (const path of laneDetection.birdPaths) {
     drawProjectedLanePath(context, path, (point) =>
-      projectNormalizedPointToBirdView(point, width, height, destinationRoad, roadCalibration),
+      projectBirdPointToBirdView(point, width, destinationRoad),
     );
   }
 
   context.restore();
+}
+
+function drawSourceAsBirdView(
+  context: CanvasRenderingContext2D,
+  source: DetectableSource,
+  roadCalibration: RoadCalibration,
+  destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
+  stageWidth: number,
+  stageHeight: number,
+) {
+  const outputWidth = Math.max(1, Math.round(destinationRoad.bottomWidth));
+  const outputHeight = Math.max(1, Math.round(destinationRoad.bottomY - destinationRoad.topY));
+  const birdFrame = renderBirdViewFrame(source, outputWidth, outputHeight, roadCalibration);
+  const destinationLeft = (stageWidth - destinationRoad.bottomWidth) / 2;
+
+  context.save();
+  context.clip();
+  context.drawImage(birdFrame, destinationLeft, destinationRoad.topY, destinationRoad.bottomWidth, outputHeight);
+  context.fillStyle = "rgba(2, 6, 23, 0.28)";
+  context.fillRect(destinationLeft, destinationRoad.topY, destinationRoad.bottomWidth, outputHeight);
+  context.restore();
+}
+
+function renderBirdViewFrame(
+  source: DetectableSource,
+  outputWidth: number,
+  outputHeight: number,
+  roadCalibration: RoadCalibration,
+) {
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = outputWidth;
+  sourceCanvas.height = outputHeight;
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = outputWidth;
+  outputCanvas.height = outputHeight;
+  const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext || !outputContext) {
+    return outputCanvas;
+  }
+
+  sourceContext.drawImage(source, 0, 0, outputWidth, outputHeight);
+  const sourceImage = sourceContext.getImageData(0, 0, outputWidth, outputHeight);
+  const outputImage = outputContext.createImageData(outputWidth, outputHeight);
+
+  for (let y = 0; y < outputHeight; y += 1) {
+    const depth = y / Math.max(1, outputHeight - 1);
+    const sourceY = roadCalibration.topY + (roadCalibration.bottomY - roadCalibration.topY) * depth;
+    const sourceRoad = sourceRoadAtY(sourceY, roadCalibration);
+
+    for (let x = 0; x < outputWidth; x += 1) {
+      const lateral = x / Math.max(1, outputWidth - 1);
+      const sourceX = sourceRoad.left + (sourceRoad.right - sourceRoad.left) * lateral;
+      const sampleX = clamp(Math.round(sourceX * (outputWidth - 1)), 0, outputWidth - 1);
+      const sampleY = clamp(Math.round(sourceY * (outputHeight - 1)), 0, outputHeight - 1);
+      const sourceOffset = (sampleY * outputWidth + sampleX) * 4;
+      const outputOffset = (y * outputWidth + x) * 4;
+      outputImage.data[outputOffset] = sourceImage.data[sourceOffset];
+      outputImage.data[outputOffset + 1] = sourceImage.data[sourceOffset + 1];
+      outputImage.data[outputOffset + 2] = sourceImage.data[sourceOffset + 2];
+      outputImage.data[outputOffset + 3] = 255;
+    }
+  }
+
+  outputContext.putImageData(outputImage, 0, 0);
+  return outputCanvas;
 }
 
 function drawCameraLaneGuide(
@@ -2327,7 +2401,7 @@ function drawDetectedLaneLines(
   context.lineCap = "round";
   context.lineJoin = "round";
 
-  for (const path of [...laneDetection.left, ...laneDetection.right]) {
+  for (const path of laneDetection.sourcePaths) {
     drawProjectedLanePath(context, path, (point) =>
       sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
     );
@@ -2368,53 +2442,60 @@ function detectLaneLinesFromSource(
   canvas: HTMLCanvasElement,
   roadCalibration: RoadCalibration,
 ): LaneDetection {
-  const dimensions = getSourceDimensions(source);
-  const width = 240;
-  const height = Math.max(120, Math.round((dimensions.height / Math.max(1, dimensions.width)) * width));
-  canvas.width = width;
-  canvas.height = height;
+  const width = 260;
+  const height = 180;
+  const birdFrame = renderBirdViewFrame(source, width, height, roadCalibration);
+  canvas.width = birdFrame.width;
+  canvas.height = birdFrame.height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
     return emptyLaneDetection(roadCalibration);
   }
 
-  context.drawImage(source, 0, 0, width, height);
+  context.drawImage(birdFrame, 0, 0);
   const image = context.getImageData(0, 0, width, height);
-  const leftPoints: NormalizedPoint[] = [];
-  const rightPoints: NormalizedPoint[] = [];
-  const startY = Math.floor(height * roadCalibration.topY);
-  const endY = Math.floor(height * roadCalibration.bottomY);
+  const birdPointsByColumn = new Map<number, NormalizedPoint[]>();
+  const scanStartY = Math.floor(height * 0.04);
+  const scanEndY = Math.floor(height * 0.98);
+  const columnCount = 12;
 
-  for (let y = startY; y <= endY; y += 3) {
-    const normalizedY = y / height;
-    const road = sourceRoadAtY(normalizedY, roadCalibration);
-    const leftX = Math.max(0, Math.floor(road.left * width));
-    const rightX = Math.min(width - 1, Math.ceil(road.right * width));
-    const centerX = Math.round((leftX + rightX) / 2);
-    const leftCandidate = findLanePixelCandidate(image.data, width, y, leftX, centerX - 4);
-    const rightCandidate = findLanePixelCandidate(image.data, width, y, centerX + 4, rightX);
+  for (let y = scanStartY; y <= scanEndY; y += 3) {
+    for (let column = 0; column < columnCount; column += 1) {
+      const startX = Math.floor((column / columnCount) * width);
+      const endX = Math.min(width - 1, Math.ceil(((column + 1) / columnCount) * width));
+      const candidate = findLanePixelCandidate(image.data, width, y, startX, endX);
 
-    if (leftCandidate) {
-      leftPoints.push({ x: leftCandidate.x / width, y: normalizedY });
-    }
-    if (rightCandidate) {
-      rightPoints.push({ x: rightCandidate.x / width, y: normalizedY });
+      if (!candidate) {
+        continue;
+      }
+
+      const bucket = Math.max(0, Math.min(columnCount - 1, Math.floor((candidate.x / width) * columnCount)));
+      const points = birdPointsByColumn.get(bucket) ?? [];
+      points.push({ x: candidate.x / width, y: y / height });
+      birdPointsByColumn.set(bucket, points);
     }
   }
 
-  const left = fitLanePaths(leftPoints);
-  const right = fitLanePaths(rightPoints);
-  const rowCount = Math.max(1, Math.floor((endY - startY) / 3));
+  const birdPaths = mergeNearbyBirdLanePaths(
+    [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points)),
+  );
+  const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
+  const left = sourcePaths.filter((path) => pathAverageX(path) < 0.5);
+  const right = sourcePaths.filter((path) => pathAverageX(path) >= 0.5);
+  const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
+  const rowCount = Math.max(1, Math.floor((scanEndY - scanStartY) / 3));
   const confidence = clamp01(
-    (Math.min(leftPoints.length, rowCount * 0.6) + Math.min(rightPoints.length, rowCount * 0.6)) / (rowCount * 1.2),
+    Math.min(pointCount, rowCount * 2.4) / (rowCount * 2.4),
   );
 
   return {
+    birdPaths,
     confidence,
     left,
     road: roadCalibration,
     right,
     roiConfidence: confidence,
+    sourcePaths,
     updatedAt: performance.now(),
   };
 }
@@ -2511,13 +2592,39 @@ function fitLanePaths(points: NormalizedPoint[]): NormalizedPoint[][] {
   return smoothedSegments;
 }
 
+function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
+  return paths
+    .filter((path) => path.length >= 2)
+    .sort((a, b) => pathAverageX(a) - pathAverageX(b));
+}
+
+function birdPointToSourcePoint(point: NormalizedPoint, roadCalibration: RoadCalibration): NormalizedPoint {
+  const sourceY = roadCalibration.topY + (roadCalibration.bottomY - roadCalibration.topY) * clamp01(point.y);
+  const sourceRoad = sourceRoadAtY(sourceY, roadCalibration);
+
+  return {
+    x: clamp01(sourceRoad.left + (sourceRoad.right - sourceRoad.left) * clamp01(point.x)),
+    y: clamp01(sourceY),
+  };
+}
+
+function pathAverageX(path: NormalizedPoint[]) {
+  if (path.length === 0) {
+    return 0.5;
+  }
+
+  return path.reduce((total, point) => total + point.x, 0) / path.length;
+}
+
 function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
   return {
+    birdPaths: [],
     confidence: 0,
     left: [],
     road: roadCalibration,
     right: [],
     roiConfidence: 0,
+    sourcePaths: [],
     updatedAt: performance.now(),
   };
 }
@@ -2568,6 +2675,20 @@ function projectNormalizedPointToBirdView(
   };
 }
 
+function projectBirdPointToBirdView(
+  point: NormalizedPoint,
+  width: number,
+  destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
+) {
+  const destinationWidth = destinationRoad.bottomWidth;
+  const destinationLeft = (width - destinationWidth) / 2;
+
+  return {
+    x: destinationLeft + clamp01(point.x) * destinationWidth,
+    y: destinationRoad.topY + clamp01(point.y) * (destinationRoad.bottomY - destinationRoad.topY),
+  };
+}
+
 function createManualRoadCalibration(topY: number, bottomWidth: number): RoadCalibration {
   const safeTopY = clamp(topY, 0.5, 0.8);
   const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
@@ -2588,20 +2709,22 @@ function blendRoadCalibration(
   currentCalibration: RoadCalibration,
   laneDetection: LaneDetection,
 ) {
-  if (laneDetection.left.length === 0 || laneDetection.right.length === 0 || laneDetection.confidence < 0.18) {
+  if (laneDetection.sourcePaths.length === 0 || laneDetection.confidence < 0.18) {
     return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
   }
 
   const topY = manualCalibration.topY;
   const bottomY = manualCalibration.bottomY;
-  const leftTop = pathsXAtY(laneDetection.left, topY);
-  const rightTop = pathsXAtY(laneDetection.right, topY);
-  const leftBottom = pathsXAtY(laneDetection.left, bottomY);
-  const rightBottom = pathsXAtY(laneDetection.right, bottomY);
+  const topBounds = pathsBoundsAtY(laneDetection.sourcePaths, topY);
+  const bottomBounds = pathsBoundsAtY(laneDetection.sourcePaths, bottomY);
 
-  if (leftTop === null || rightTop === null || leftBottom === null || rightBottom === null) {
+  if (!topBounds || !bottomBounds) {
     return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
   }
+  const leftTop = topBounds.left;
+  const rightTop = topBounds.right;
+  const leftBottom = bottomBounds.left;
+  const rightBottom = bottomBounds.right;
   const detectedBottomWidth = rightBottom - leftBottom;
   const detectedTopWidth = rightTop - leftTop;
 
@@ -2643,18 +2766,25 @@ function approachRoadCalibration(from: RoadCalibration, to: RoadCalibration, wei
   };
 }
 
-function pathsXAtY(paths: NormalizedPoint[][], y: number) {
-  let nearest: { distance: number; x: number } | null = null;
+function pathsBoundsAtY(paths: NormalizedPoint[][], y: number) {
+  const candidates: Array<{ distance: number; x: number }> = [];
 
   for (const path of paths) {
     const range = pathYRange(path);
     const distance = y < range.min ? range.min - y : y > range.max ? y - range.max : 0;
-    if (!nearest || distance < nearest.distance) {
-      nearest = { distance, x: pathXAtY(path, y) };
+    if (distance <= 0.16) {
+      candidates.push({ distance, x: pathXAtY(path, y) });
     }
   }
 
-  return nearest && nearest.distance <= 0.16 ? nearest.x : null;
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return {
+    left: Math.min(...candidates.map((candidate) => candidate.x)),
+    right: Math.max(...candidates.map((candidate) => candidate.x)),
+  };
 }
 
 function pathXAtY(path: NormalizedPoint[], y: number) {
