@@ -85,9 +85,12 @@ const runtimeDefaults = {
   llmModelLibUrl:
     process.env.NEXT_PUBLIC_LLM_MODEL_LIB_URL ??
     "/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm",
-  llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 512),
+  llmMaxNewTokens: Number(process.env.NEXT_PUBLIC_LLM_MAX_NEW_TOKENS ?? 160),
   llmTemperature: Number(process.env.NEXT_PUBLIC_LLM_TEMPERATURE ?? 0.2),
   llmRuntime: defaultLlmRuntime,
+  llmLoopDelayMs: Number(process.env.NEXT_PUBLIC_LLM_LOOP_DELAY_MS ?? 1200),
+  llmFrameMaxSide: Number(process.env.NEXT_PUBLIC_LLM_FRAME_MAX_SIDE ?? 448),
+  llmFrameJpegQuality: Number(process.env.NEXT_PUBLIC_LLM_FRAME_JPEG_QUALITY ?? 0.72),
   streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3010",
 };
 
@@ -621,7 +624,11 @@ export default function Home() {
     const prompt = fixedPrompt.trim() || defaultFixedPrompt;
     const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
     const imageDataUrl = includeFrame
-      ? captureSourceFrame(getActiveSource(sourceSurface, videoRef.current, imageRef.current))
+      ? captureSourceFrame(
+          getActiveSource(sourceSurface, videoRef.current, imageRef.current),
+          runtimeDefaults.llmFrameMaxSide,
+          runtimeDefaults.llmFrameJpegQuality,
+        )
       : undefined;
     const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, true);
     const nextMessages: BrowserLlmMessage[] = [
@@ -633,9 +640,10 @@ export default function Home() {
     inferenceRunningRef.current = true;
     inferenceRoundRef.current += 1;
     setLlmState("generating");
-    setLlmDetail(`Generating local loop round ${inferenceRoundRef.current}...`);
+    setLlmDetail(`Generating local loop round ${inferenceRoundRef.current}; vision detection paused...`);
 
     try {
+      await waitForNextAnimationFrame();
       const generation = await llmRef.current.generate(nextMessages, imageDataUrl);
       const elapsedMs = performance.now() - startedAt;
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
@@ -663,7 +671,7 @@ export default function Home() {
       if (inferenceLoopRef.current) {
         window.setTimeout(() => {
           void runInferenceRoundRef.current();
-        }, 100);
+        }, runtimeDefaults.llmLoopDelayMs);
       }
     }
   }, [fixedPrompt, includeFrame, sourceSurface, systemPrompt]);
@@ -940,6 +948,7 @@ export default function Home() {
         source &&
         detector &&
         isSourceReady(source) &&
+        !inferenceRunningRef.current &&
         !detectingRef.current
       ) {
         detectionFrameRef.current += 1;
@@ -1770,14 +1779,15 @@ async function startHlsVideoUrl(url: string, video: HTMLVideoElement | null, set
   await video.play();
 }
 
-function captureSourceFrame(source: DetectableSource | null) {
+function captureSourceFrame(source: DetectableSource | null, maxSide: number, jpegQuality: number) {
   if (!source || !isSourceReady(source)) {
     return undefined;
   }
 
   const dimensions = getSourceDimensions(source);
-  const maxSide = 768;
-  const scale = Math.min(1, maxSide / Math.max(dimensions.width, dimensions.height));
+  const safeMaxSide = Math.max(64, maxSide);
+  const safeJpegQuality = Math.min(0.95, Math.max(0.4, jpegQuality));
+  const scale = Math.min(1, safeMaxSide / Math.max(dimensions.width, dimensions.height));
   const width = Math.max(1, Math.round(dimensions.width * scale));
   const height = Math.max(1, Math.round(dimensions.height * scale));
   const canvas = document.createElement("canvas");
@@ -1789,7 +1799,15 @@ function captureSourceFrame(source: DetectableSource | null) {
   }
 
   context.drawImage(source, 0, 0, width, height);
-  return canvas.toDataURL("image/jpeg", 0.85);
+  return canvas.toDataURL("image/jpeg", safeJpegQuality);
+}
+
+function waitForNextAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      resolve();
+    });
+  });
 }
 
 function buildLocalFallbackResponse(sceneSummary: string, diagnostics: string[]) {
