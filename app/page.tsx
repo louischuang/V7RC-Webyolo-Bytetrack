@@ -159,6 +159,7 @@ const laneDetectionIntervalMs = 140;
 const birdViewDefaultTopY = 0.65;
 const birdViewDefaultTopCenterX = 0.5;
 const birdViewDefaultTopWidth = 0.16;
+const birdViewDefaultBottomY = 0.93;
 const birdViewDefaultBottomWidth = 0.9;
 const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
@@ -186,6 +187,7 @@ export default function Home() {
       birdViewDefaultTopY,
       birdViewDefaultTopCenterX,
       birdViewDefaultTopWidth,
+      birdViewDefaultBottomY,
       birdViewDefaultBottomWidth,
     ),
   );
@@ -263,6 +265,7 @@ export default function Home() {
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
   const [roiTopCenterX, setRoiTopCenterX] = useState(birdViewDefaultTopCenterX);
   const [roiTopWidth, setRoiTopWidth] = useState(birdViewDefaultTopWidth);
+  const [roiBottomY, setRoiBottomY] = useState(birdViewDefaultBottomY);
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [roiConfidence, setRoiConfidence] = useState(0);
@@ -406,12 +409,12 @@ export default function Home() {
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
 
   useEffect(() => {
-    const manualCalibration = createManualRoadCalibration(roiTopY, roiTopCenterX, roiTopWidth, roiBottomWidth);
+    const manualCalibration = createManualRoadCalibration(roiTopY, roiTopCenterX, roiTopWidth, roiBottomY, roiBottomWidth);
     roadCalibrationRef.current = manualCalibration;
     laneDetectionRef.current = laneDetectionRef.current
       ? { ...laneDetectionRef.current, road: manualCalibration, roiConfidence: 0 }
       : null;
-  }, [roiBottomWidth, roiTopCenterX, roiTopWidth, roiTopY]);
+  }, [roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY]);
 
   const stopCamera = useCallback(() => {
     if (gatewayStreamIdRef.current) {
@@ -1259,7 +1262,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
-  }, [roiBottomWidth, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
+  }, [roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -1472,6 +1475,21 @@ export default function Home() {
                   }}
                 />
                 <strong>{roiBottomWidth.toFixed(2)}</strong>
+              </label>
+              <label>
+                <span>Bottom Y</span>
+                <input
+                  type="range"
+                  min="0.78"
+                  max="0.99"
+                  step="0.01"
+                  value={roiBottomY}
+                  onChange={(event) => {
+                    setRoiBottomY(Number(event.target.value));
+                    setRoiConfidence(0);
+                  }}
+                />
+                <strong>{roiBottomY.toFixed(2)}</strong>
               </label>
             </div>
             <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
@@ -2589,9 +2607,10 @@ function detectLaneLinesFromSource(
     }
   }
 
-  const birdPaths = mergeNearbyBirdLanePaths(
+  const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points)),
   );
+  const birdPaths = extendBirdLanePaths(detectedBirdPaths);
   const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
   const laneBands = createLaneBands(birdPaths, roadCalibration);
   const left = sourcePaths.filter((path) => pathAverageX(path) < 0.5);
@@ -2712,6 +2731,47 @@ function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
   return paths
     .filter((path) => path.length >= 2)
     .sort((a, b) => pathAverageX(a) - pathAverageX(b));
+}
+
+function extendBirdLanePaths(paths: NormalizedPoint[][]) {
+  return paths.map(extendBirdLanePath);
+}
+
+function extendBirdLanePath(path: NormalizedPoint[]) {
+  const sorted = [...path].sort((a, b) => a.y - b.y);
+  if (sorted.length < 2) {
+    return sorted;
+  }
+
+  const range = pathYRange(sorted);
+  if (range.max - range.min < 0.08) {
+    return sorted;
+  }
+
+  const targetTopY = 0.02;
+  const targetBottomY = 0.98;
+  const extended = [...sorted];
+
+  if (range.min > targetTopY) {
+    extended.unshift({
+      x: extrapolatePathXAtY(sorted[0], sorted[Math.min(1, sorted.length - 1)], targetTopY),
+      y: targetTopY,
+    });
+  }
+
+  if (range.max < targetBottomY) {
+    extended.push({
+      x: extrapolatePathXAtY(sorted[Math.max(0, sorted.length - 2)], sorted[sorted.length - 1], targetBottomY),
+      y: targetBottomY,
+    });
+  }
+
+  return extended;
+}
+
+function extrapolatePathXAtY(start: NormalizedPoint, end: NormalizedPoint, y: number) {
+  const slope = (end.x - start.x) / Math.max(0.001, end.y - start.y);
+  return clamp01(start.x + slope * (y - start.y));
 }
 
 function createLaneBands(birdPaths: NormalizedPoint[][], roadCalibration: RoadCalibration): LaneBand[] {
@@ -2859,17 +2919,19 @@ function createManualRoadCalibration(
   topY: number,
   topCenterX: number,
   topWidth: number,
+  bottomY: number,
   bottomWidth: number,
 ): RoadCalibration {
   const safeTopY = clamp(topY, 0.5, 0.8);
   const safeTopCenterX = clamp(topCenterX, 0.25, 0.75);
   const safeTopWidth = clamp(topWidth, 0.06, 0.48);
+  const safeBottomY = clamp(bottomY, safeTopY + 0.08, 0.99);
   const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
 
   return {
     bottomLeftX: (1 - safeBottomWidth) / 2,
     bottomRightX: (1 + safeBottomWidth) / 2,
-    bottomY: 0.93,
+    bottomY: safeBottomY,
     topLeftX: clamp(safeTopCenterX - safeTopWidth / 2, 0.02, 0.92),
     topRightX: clamp(safeTopCenterX + safeTopWidth / 2, 0.08, 0.98),
     topY: safeTopY,
