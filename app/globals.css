@@ -496,6 +496,52 @@ input {
   padding: 10px;
 }
 
+.robot-drive-mode {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.robot-drive-mode > span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.robot-drive-mode small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 4px;
+}
+
+.segmented-control button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.segmented-control button.active {
+  background: #e2e8f0;
+  color: #020617;
+}
+
 .robot-packet {
   display: grid;
   gap: 6px;

@@ -233,9 +233,11 @@
 - [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
 - [ ] Add current track summary, target color hints, and recent command state to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
+- [x] Add vehicle, mecanum, and tank SRT channel mappings for the current robot command state.
+- [x] Send the current V7RC SRT command every 30ms while connected.
 - [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
 - [ ] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
-- [ ] Add command preview UI showing proposed channel values before hardware transmission.
+- [x] Add command preview UI showing proposed channel values before hardware transmission.
 - [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
 - [ ] Store goal/prompt/control settings in browser local storage.
 

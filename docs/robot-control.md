@@ -21,10 +21,18 @@ The first hardware-facing version should support "suggestion mode" before live c
 
 Current implementation:
 
-- `app/lib/v7rc-protocol.ts` implements `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` encoding helpers plus normalized intent to `HEX` channel conversion.
+- `app/lib/v7rc-protocol.ts` implements `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` encoding helpers plus normalized intent to 4-channel `SRT` PWM conversion.
 - `app/lib/v7rc-transport.ts` implements a mock transport and a Chrome Web Bluetooth transport for the V7RC BLE UART UUIDs.
-- The UI exposes a `Robot / V7RC` card with `Mock`, `BLE`, `Neutral`, `E-stop`, `Disconnect`, packet preview, and channel preview.
+- The UI exposes a `Robot / V7RC` card with `Mock`, `BLE`, `Neutral`, `E-stop`, `Disconnect`, vehicle/mecanum/tank mode selection, SRT packet preview, and up to 4 channel previews.
 - Gemma is still observation-only; command generation is not yet wired into the robot transport.
+
+Drive modes:
+
+- Vehicle: `CH0` steering, `CH1` throttle, `CH2-CH3` neutral.
+- Tank: `CH0` turn, `CH1` throttle, `CH2-CH3` neutral.
+- Mecanum: `CH0` strafe, `CH1` throttle, `CH2` turn, `CH3` neutral.
+
+When a mock or Bluetooth robot is connected, the app sends the current `SRT` command every 30ms. UI status updates are throttled so the command loop does not make the video or YOLO pipeline less responsive.
 
 ## Web Bluetooth
 

@@ -214,8 +214,8 @@ Current UI state:
 - The right panel includes a `Robot / V7RC` card.
 - `Mock` connects a local mock transport for packet testing without hardware.
 - `BLE` opens Chrome Web Bluetooth pairing using the V7RC service UUID.
-- `Neutral` and `E-stop` send `HEX` frames through the active transport.
-- The card shows the last packet and a channel/PWM preview.
+- `Neutral` and `E-stop` update the current control state.
+- The card supports Vehicle, Mecanum, and Tank modes, sends 4-channel `SRT` PWM frames every 30ms while connected, and shows the last packet plus up to four channel previews.
 
 Safety rules for the first control MVP:
 

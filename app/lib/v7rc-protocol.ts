@@ -5,6 +5,7 @@ export const v7rcBleUuids = {
 } as const;
 
 export type V7rcCommand = "HEX" | "DEG" | "SRV" | "SR2" | "SRT" | "CMD";
+export type V7rcDriveMode = "vehicle" | "mecanum" | "tank";
 
 export type V7rcRobotIntent = {
   linear: number;
@@ -34,7 +35,7 @@ export type V7rcChannelPreview = {
   index: number;
   logical: string;
   normalized: number;
-  byteValue: number;
+  byteValue?: number;
   pwmUs: number;
 };
 
@@ -121,6 +122,10 @@ export function encodePwmTextFrame(command: "SRV" | "SR2" | "SRT", pwmUs: number
   return encodeAsciiFrame(`${command}${pwmUs.map((value) => formatPwm(value)).join("")}#`);
 }
 
+export function encodeSrtFrame(pwmUs: number[]) {
+  return encodePwmTextFrame("SRT", pwmUs);
+}
+
 export function encodeCmdFrame(command: string) {
   const trimmed = command.slice(0, 16);
   return encodeAsciiFrame(`CMD${trimmed.padEnd(16, " ")}#`);
@@ -163,6 +168,50 @@ export function previewHexChannels(intent: V7rcRobotIntent, config: V7rcChannelC
   }));
 }
 
+export function intentToSrtPwm(
+  intent: V7rcRobotIntent,
+  mode: V7rcDriveMode,
+  config: V7rcChannelConfig = defaultChannelConfig,
+) {
+  const speedScale = clamp(intent.speedScale, 0, 1);
+  const motionScale = intent.emergencyStop || intent.neutral || !intent.autonomy ? 0 : speedScale;
+  const throttle = intent.linear * motionScale;
+  const steering = intent.turn * motionScale;
+  const strafe = intent.strafe * motionScale;
+
+  if (mode === "mecanum") {
+    return [
+      normalizedToPwm(strafe, config),
+      normalizedToPwm(throttle, config),
+      normalizedToPwm(steering, config),
+      config.neutralUs,
+    ];
+  }
+
+  return [
+    normalizedToPwm(steering, config),
+    normalizedToPwm(throttle, config),
+    config.neutralUs,
+    config.neutralUs,
+  ];
+}
+
+export function previewSrtChannels(
+  intent: V7rcRobotIntent,
+  mode: V7rcDriveMode,
+  config: V7rcChannelConfig = defaultChannelConfig,
+): V7rcChannelPreview[] {
+  const pwmValues = intentToSrtPwm(intent, mode, config);
+  const labels = srtLogicalChannelsForMode(mode);
+
+  return pwmValues.map((pwmUs, index) => ({
+    index,
+    logical: labels[index],
+    normalized: pwmToNormalized(pwmUs, config),
+    pwmUs,
+  }));
+}
+
 export function frameToDebugString(frame: Uint8Array) {
   return Array.from(frame)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -185,9 +234,7 @@ function formatPwm(value: number) {
 }
 
 function normalizedToByte(value: number, config: V7rcChannelConfig) {
-  const clamped = Math.abs(value) < config.deadband ? 0 : clamp(value, -1, 1);
-  const span = clamped >= 0 ? config.maxUs - config.neutralUs : config.neutralUs - config.minUs;
-  return clampByte(Math.round((config.neutralUs + clamped * span) / 10));
+  return clampByte(Math.round(normalizedToPwm(value, config) / 10));
 }
 
 function byteToNormalized(value: number, config: V7rcChannelConfig) {
@@ -198,6 +245,34 @@ function byteToNormalized(value: number, config: V7rcChannelConfig) {
 
   const span = pwmUs > config.neutralUs ? config.maxUs - config.neutralUs : config.neutralUs - config.minUs;
   return Number(((pwmUs - config.neutralUs) / span).toFixed(2));
+}
+
+function normalizedToPwm(value: number, config: V7rcChannelConfig) {
+  const clamped = Math.abs(value) < config.deadband ? 0 : clamp(value, -1, 1);
+  const span = clamped >= 0 ? config.maxUs - config.neutralUs : config.neutralUs - config.minUs;
+  return Math.round(config.neutralUs + clamped * span);
+}
+
+function pwmToNormalized(value: number, config: V7rcChannelConfig) {
+  const pwmUs = Math.round(clamp(value, config.minUs, config.maxUs));
+  if (pwmUs === config.neutralUs) {
+    return 0;
+  }
+
+  const span = pwmUs > config.neutralUs ? config.maxUs - config.neutralUs : config.neutralUs - config.minUs;
+  return Number(((pwmUs - config.neutralUs) / span).toFixed(2));
+}
+
+function srtLogicalChannelsForMode(mode: V7rcDriveMode) {
+  if (mode === "mecanum") {
+    return ["strafe left/right", "throttle forward/reverse", "steering / yaw", "reserved"];
+  }
+
+  if (mode === "tank") {
+    return ["turn right/left", "throttle forward/reverse", "reserved", "reserved"];
+  }
+
+  return ["steering wheel", "throttle forward/reverse", "reserved", "reserved"];
 }
 
 function configForChannel(index: number, config: V7rcChannelConfig): V7rcChannelConfig {

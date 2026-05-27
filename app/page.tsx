@@ -6,10 +6,11 @@ import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
 import {
   createNeutralIntent,
-  encodeHexFrame,
+  encodeSrtFrame,
   frameToDebugString,
-  intentToHexChannels,
-  previewHexChannels,
+  intentToSrtPwm,
+  previewSrtChannels,
+  type V7rcDriveMode,
   type V7rcRobotIntent,
 } from "./lib/v7rc-protocol";
 import {
@@ -116,6 +117,12 @@ const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "rtsp", label: "RTSP" },
   { id: "youtube", label: "YouTube" },
 ];
+const robotDriveModes: Array<{ id: V7rcDriveMode; label: string }> = [
+  { id: "vehicle", label: "車輛" },
+  { id: "mecanum", label: "麥克納姆輪" },
+  { id: "tank", label: "坦克" },
+];
+const robotCommandIntervalMs = 30;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -127,6 +134,10 @@ export default function Home() {
   const detectorRef = useRef<YoloDetector | null>(null);
   const llmRef = useRef<BrowserLlm | null>(null);
   const robotTransportRef = useRef<V7rcTransport | null>(null);
+  const robotIntentRef = useRef<V7rcRobotIntent>(createNeutralIntent());
+  const robotDriveModeRef = useRef<V7rcDriveMode>("vehicle");
+  const robotWriteInFlightRef = useRef(false);
+  const robotLastStatusUpdateRef = useRef(0);
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
       highThreshold: Number(process.env.NEXT_PUBLIC_TRACK_HIGH_THRESH ?? 0.6),
@@ -193,6 +204,7 @@ export default function Home() {
   });
   const [robotError, setRobotError] = useState("");
   const [robotIntent, setRobotIntent] = useState<V7rcRobotIntent>(() => createNeutralIntent());
+  const [robotDriveMode, setRobotDriveMode] = useState<V7rcDriveMode>("vehicle");
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -223,11 +235,11 @@ export default function Home() {
     [robotError, robotStatus],
   );
 
-  const robotChannelPreview = useMemo(() => previewHexChannels(robotIntent).slice(0, 12), [robotIntent]);
+  const robotChannelPreview = useMemo(() => previewSrtChannels(robotIntent, robotDriveMode).slice(0, 4), [robotDriveMode, robotIntent]);
 
   const robotPacketPreview = useMemo(
-    () => frameToDebugString(encodeHexFrame(intentToHexChannels(robotIntent))),
-    [robotIntent],
+    () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(robotIntent, robotDriveMode))),
+    [robotDriveMode, robotIntent],
   );
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
@@ -809,6 +821,14 @@ export default function Home() {
     }
   }, [streamUrls.youtube]);
 
+  useEffect(() => {
+    robotIntentRef.current = robotIntent;
+  }, [robotIntent]);
+
+  useEffect(() => {
+    robotDriveModeRef.current = robotDriveMode;
+  }, [robotDriveMode]);
+
   const connectMockRobot = useCallback(async () => {
     setRobotError("");
     const transport = createMockV7rcTransport();
@@ -846,7 +866,7 @@ export default function Home() {
 
     try {
       if (transport.getStatus().connected) {
-        const neutralFrame = encodeHexFrame(intentToHexChannels(createNeutralIntent()));
+        const neutralFrame = encodeSrtFrame(intentToSrtPwm(createNeutralIntent(), robotDriveModeRef.current));
         await transport.write(neutralFrame);
       }
       setRobotStatus(await transport.disconnect());
@@ -858,36 +878,61 @@ export default function Home() {
     }
   }, []);
 
-  const sendRobotIntent = useCallback(async (intent: V7rcRobotIntent) => {
+  const sendRobotIntent = useCallback((intent: V7rcRobotIntent) => {
     setRobotError("");
-    const transport = robotTransportRef.current;
-    if (!transport?.getStatus().connected) {
-      setRobotError("Connect a mock or Bluetooth robot before sending V7RC commands.");
-      return;
-    }
-
-    try {
-      const frame = encodeHexFrame(intentToHexChannels(intent));
-      setRobotIntent(intent);
-      setRobotStatus(await transport.write(frame));
-    } catch (error) {
-      setRobotError(error instanceof Error ? error.message : "Could not send V7RC command.");
-    }
+    setRobotIntent(intent);
   }, []);
 
-  const sendRobotNeutral = useCallback(async () => {
-    await sendRobotIntent(createNeutralIntent());
+  const sendRobotNeutral = useCallback(() => {
+    sendRobotIntent(createNeutralIntent());
     setRobotMode("suggestion");
   }, [sendRobotIntent]);
 
-  const sendRobotEmergencyStop = useCallback(async () => {
-    await sendRobotIntent({
+  const sendRobotEmergencyStop = useCallback(() => {
+    sendRobotIntent({
       ...createNeutralIntent(),
       emergencyStop: true,
       neutral: true,
     });
     setRobotMode("suggestion");
   }, [sendRobotIntent]);
+
+  useEffect(() => {
+    if (!robotStatus.connected) {
+      return;
+    }
+
+    const writeCurrentCommand = async () => {
+      const transport = robotTransportRef.current;
+      if (!transport?.getStatus().connected || robotWriteInFlightRef.current) {
+        return;
+      }
+
+      robotWriteInFlightRef.current = true;
+      try {
+        const frame = encodeSrtFrame(intentToSrtPwm(robotIntentRef.current, robotDriveModeRef.current));
+        const status = await transport.write(frame);
+        const now = performance.now();
+        if (now - robotLastStatusUpdateRef.current > 250) {
+          robotLastStatusUpdateRef.current = now;
+          setRobotStatus(status);
+        }
+      } catch (error) {
+        setRobotError(error instanceof Error ? error.message : "Could not send V7RC SRT command.");
+      } finally {
+        robotWriteInFlightRef.current = false;
+      }
+    };
+
+    void writeCurrentCommand();
+    const interval = window.setInterval(() => {
+      void writeCurrentCommand();
+    }, robotCommandIntervalMs);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [robotStatus.connected]);
 
   useEffect(() => {
     if (sourceMode === "rtsp" || sourceMode === "youtube") {
@@ -1244,7 +1289,7 @@ export default function Home() {
               <button
                 className="secondary-button compact-button"
                 type="button"
-                onClick={() => void sendRobotNeutral()}
+                onClick={() => sendRobotNeutral()}
                 disabled={!robotStatus.connected}
               >
                 Neutral
@@ -1252,7 +1297,7 @@ export default function Home() {
               <button
                 className="danger-button compact-button"
                 type="button"
-                onClick={() => void sendRobotEmergencyStop()}
+                onClick={() => sendRobotEmergencyStop()}
                 disabled={!robotStatus.connected}
               >
                 E-stop
@@ -1266,8 +1311,24 @@ export default function Home() {
                 Disconnect
               </button>
             </div>
+            <div className="robot-drive-mode">
+              <span>Robot 模式</span>
+              <div className="segmented-control">
+                {robotDriveModes.map((mode) => (
+                  <button
+                    className={robotDriveMode === mode.id ? "active" : ""}
+                    key={mode.id}
+                    type="button"
+                    onClick={() => setRobotDriveMode(mode.id)}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              <small>BLE connected 後每 {robotCommandIntervalMs}ms 以 SRT 格式送出目前 Channel 狀態。</small>
+            </div>
             <div className="robot-packet">
-              <span>HEX preview</span>
+              <span>SRT preview</span>
               <code>{robotStatus.lastPacket || robotPacketPreview}</code>
             </div>
             <div className="robot-channel-table">
