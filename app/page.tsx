@@ -40,7 +40,7 @@ type GatewayStatus = "idle" | "checking" | "ready" | "connecting" | "streaming" 
 
 type RuntimeStatus = {
   label: string;
-  state: "idle" | "loading" | "ready" | "error";
+  state: "idle" | "loading" | "ready" | "generating" | "error";
   detail: string;
 };
 
@@ -162,7 +162,7 @@ export default function Home() {
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
       label: "Gemma4-E2B",
-      state: llmState === "checking" || llmState === "loading" || llmState === "generating" ? "loading" : llmState,
+      state: llmState === "checking" || llmState === "loading" ? "loading" : llmState,
       detail: llmDetail,
     }),
     [llmDetail, llmState],
@@ -1065,7 +1065,7 @@ export default function Home() {
                   onClick={loadGemma}
                   disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
                 >
-                  {llmState === "ready" ? "Loaded" : "Load"}
+                  {llmState === "ready" || llmState === "generating" ? "Loaded" : "Load"}
                 </button>
                 <button
                   className="icon-button compact-icon-button"

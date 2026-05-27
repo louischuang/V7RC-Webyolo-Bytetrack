@@ -405,6 +405,11 @@ input {
   background: var(--warn);
 }
 
+.status-dot.generating {
+  background: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+}
+
 .status-dot.error {
   background: #f43f5e;
 }
