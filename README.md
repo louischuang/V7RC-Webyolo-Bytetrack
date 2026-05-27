@@ -165,8 +165,8 @@ Planned browser-side modules:
 - `PerceptionState`: current frame, detections, tracks, color hints, and recent command state.
 - `GemmaAction`: structured LLM output with observation, goal status, target, motion intent, arm intent, and stop reason.
 - `SafetyController`: clamps speed/servo values, applies neutral timeout, validates confidence, and blocks motion unless autonomy is enabled.
-- `V7rcProtocol`: converts normalized intent values into V7RC command packets such as `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, or `CMD`.
-- `BluetoothTransport`: connects to the robot with Chrome Web Bluetooth and writes command frames to the configured BLE characteristic.
+- `V7rcProtocol`: converts normalized intent values into V7RC command packets such as `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, or `CMD`. Initial module is implemented at `app/lib/v7rc-protocol.ts`.
+- `BluetoothTransport`: connects to the robot with Chrome Web Bluetooth and writes command frames to the configured BLE characteristic. Initial mock/Web Bluetooth transport is implemented at `app/lib/v7rc-transport.ts`.
 
 V7RC protocol notes:
 
@@ -206,6 +206,14 @@ Initial logical channel semantics on top of `HEX` channel indices are planned as
 | `12..15` | Reserved / neutral |
 
 The implementation should use the service UUID for Web Bluetooth device filtering, write V7RC command packets to RX, and subscribe to TX notifications for acknowledgements or telemetry if the firmware emits them. A mock transport is still needed for UI and Gemma loop testing without hardware.
+
+Current UI state:
+
+- The right panel includes a `Robot / V7RC` card.
+- `Mock` connects a local mock transport for packet testing without hardware.
+- `BLE` opens Chrome Web Bluetooth pairing using the V7RC service UUID.
+- `Neutral` and `E-stop` send `HEX` frames through the active transport.
+- The card shows the last packet and a channel/PWM preview.
 
 Safety rules for the first control MVP:
 

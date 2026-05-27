@@ -230,6 +230,7 @@ input {
 .primary-button,
 .icon-button,
 .secondary-button,
+.danger-button,
 .loop-controls button {
   min-height: 38px;
   border: 0;
@@ -244,6 +245,12 @@ input {
   border: 1px solid var(--line);
   background: var(--panel-strong);
   color: var(--text);
+}
+
+.danger-button {
+  border: 1px solid rgba(244, 63, 94, 0.55);
+  background: rgba(244, 63, 94, 0.16);
+  color: #fecdd3;
 }
 
 .icon-button {
@@ -266,6 +273,7 @@ input {
 .primary-button:disabled,
 .icon-button:disabled,
 .secondary-button:disabled,
+.danger-button:disabled,
 .loop-controls button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
@@ -432,6 +440,70 @@ input {
   min-height: 30px;
   place-items: center;
   padding: 0;
+}
+
+.robot-card {
+  display: grid;
+  gap: 10px;
+}
+
+.robot-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.robot-packet {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.robot-packet span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.robot-packet code {
+  overflow-wrap: anywhere;
+  color: #bae6fd;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.robot-channel-table {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.robot-channel-row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 72px;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.robot-channel-row:first-child {
+  border-top: 0;
+}
+
+.robot-channel-row span:first-child,
+.robot-channel-row span:last-child {
+  color: var(--muted);
 }
 
 .object-list {

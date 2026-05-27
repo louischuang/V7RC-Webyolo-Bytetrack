@@ -196,22 +196,23 @@
 - [ ] Define neutral frame and command timeout behavior.
 - [ ] Define command rate limit and slew-rate limits for safe acceleration.
 - [ ] Define how firmware reports low battery, failsafe, or command rejection if supported.
-- [ ] Create a TypeScript `V7rcProtocol` encoder/decoder module.
+- [x] Create a TypeScript `V7rcProtocol` encoder module.
+- [ ] Add V7RC decoder/parsing support if TX notifications expose structured firmware replies.
 - [ ] Add unit tests for `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, `CMD`, packet length validation, and channel clamping.
-- [ ] Add a mock V7RC transport for UI and Gemma loop testing without hardware.
+- [x] Add a mock V7RC transport for UI and Gemma loop testing without hardware.
 
 ## Phase 12 - Web Bluetooth Robot Link
 
-- [ ] Add Robot status card to the UI.
-- [ ] Add `Connect Robot` button using Chrome Web Bluetooth.
-- [ ] Add `Disconnect`, `Neutral`, and `E-stop` controls.
-- [ ] Show device name, connection state, last command time, and last protocol error.
+- [x] Add Robot status card to the UI.
+- [x] Add `Connect Robot` path using Chrome Web Bluetooth.
+- [x] Add `Disconnect`, `Neutral`, and `E-stop` controls.
+- [x] Show device name, connection state, last packet, and last protocol error.
 - [x] Document V7RC BLE UART UUIDs for service, RX, and TX characteristics.
-- [ ] Implement Bluetooth device filtering with service UUID `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`.
+- [x] Implement Bluetooth device filtering with service UUID `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`.
 - [ ] Implement manual service/characteristic configuration fallback for firmware variants.
-- [ ] Implement command characteristic writer.
-- [ ] Implement notification reader if the robot exposes acknowledgements or telemetry.
-- [ ] Send neutral frame when disconnecting.
+- [x] Implement command characteristic writer.
+- [x] Implement notification reader scaffold for acknowledgements or telemetry.
+- [x] Send neutral frame when disconnecting.
 - [ ] Send neutral frame when the tab unloads or the perception loop stops.
 - [ ] Add reconnection and stale connection error handling.
 - [ ] Add Chrome secure-context guidance for production HTTPS deployment.

@@ -4,6 +4,21 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import type Hls from "hls.js";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
+import {
+  createNeutralIntent,
+  encodeHexFrame,
+  frameToDebugString,
+  intentToHexChannels,
+  previewHexChannels,
+  type V7rcRobotIntent,
+} from "./lib/v7rc-protocol";
+import {
+  canUseWebBluetooth,
+  createMockV7rcTransport,
+  createWebBluetoothV7rcTransport,
+  type V7rcTransport,
+  type V7rcTransportStatus,
+} from "./lib/v7rc-transport";
 import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
@@ -50,6 +65,8 @@ type TrackRow = {
   confidence: number;
   ageMs: number;
 };
+
+type RobotMode = "suggestion" | "armed";
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
 const defaultLlmModelId =
@@ -103,6 +120,7 @@ export default function Home() {
   const hlsRef = useRef<Hls | null>(null);
   const detectorRef = useRef<YoloDetector | null>(null);
   const llmRef = useRef<BrowserLlm | null>(null);
+  const robotTransportRef = useRef<V7rcTransport | null>(null);
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
       highThreshold: Number(process.env.NEXT_PUBLIC_TRACK_HIGH_THRESH ?? 0.6),
@@ -158,6 +176,16 @@ export default function Home() {
   const [responseCount, setResponseCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [robotMode, setRobotMode] = useState<RobotMode>("suggestion");
+  const [robotStatus, setRobotStatus] = useState<V7rcTransportStatus>({
+    connected: false,
+    deviceName: "V7RC Robot",
+    lastMessage: "Robot transport is idle.",
+    lastPacket: "",
+    mode: "mock",
+  });
+  const [robotError, setRobotError] = useState("");
+  const [robotIntent, setRobotIntent] = useState<V7rcRobotIntent>(() => createNeutralIntent());
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -177,6 +205,22 @@ export default function Home() {
         ageMs: track.missed,
       })),
     [tracks],
+  );
+
+  const robotRuntimeStatus: RuntimeStatus = useMemo(
+    () => ({
+      detail: robotError || `${robotStatus.deviceName} / ${robotStatus.lastMessage}`,
+      label: "Robot / V7RC",
+      state: robotError ? "error" : robotStatus.connected ? "ready" : "idle",
+    }),
+    [robotError, robotStatus],
+  );
+
+  const robotChannelPreview = useMemo(() => previewHexChannels(robotIntent).slice(0, 12), [robotIntent]);
+
+  const robotPacketPreview = useMemo(
+    () => frameToDebugString(encodeHexFrame(intentToHexChannels(robotIntent))),
+    [robotIntent],
   );
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
@@ -730,6 +774,86 @@ export default function Home() {
     }
   }, [streamUrls.youtube]);
 
+  const connectMockRobot = useCallback(async () => {
+    setRobotError("");
+    const transport = createMockV7rcTransport();
+    robotTransportRef.current = transport;
+    setRobotStatus(await transport.connect());
+  }, []);
+
+  const connectBluetoothRobot = useCallback(async () => {
+    setRobotError("");
+    if (!canUseWebBluetooth()) {
+      setRobotError("Web Bluetooth is not available. Use Chrome on localhost or HTTPS.");
+      return;
+    }
+
+    const transport = createWebBluetoothV7rcTransport((message) => {
+      setRobotStatus((current) => ({ ...current, lastMessage: message }));
+    });
+    robotTransportRef.current = transport;
+
+    try {
+      setRobotStatus(await transport.connect());
+    } catch (error) {
+      robotTransportRef.current = null;
+      setRobotError(error instanceof Error ? error.message : "Could not connect to V7RC robot.");
+    }
+  }, []);
+
+  const disconnectRobot = useCallback(async () => {
+    setRobotError("");
+    const transport = robotTransportRef.current;
+    if (!transport) {
+      setRobotStatus((current) => ({ ...current, connected: false, lastMessage: "Robot transport is idle." }));
+      return;
+    }
+
+    try {
+      if (transport.getStatus().connected) {
+        const neutralFrame = encodeHexFrame(intentToHexChannels(createNeutralIntent()));
+        await transport.write(neutralFrame);
+      }
+      setRobotStatus(await transport.disconnect());
+      robotTransportRef.current = null;
+      setRobotMode("suggestion");
+      setRobotIntent(createNeutralIntent());
+    } catch (error) {
+      setRobotError(error instanceof Error ? error.message : "Could not disconnect robot cleanly.");
+    }
+  }, []);
+
+  const sendRobotIntent = useCallback(async (intent: V7rcRobotIntent) => {
+    setRobotError("");
+    const transport = robotTransportRef.current;
+    if (!transport?.getStatus().connected) {
+      setRobotError("Connect a mock or Bluetooth robot before sending V7RC commands.");
+      return;
+    }
+
+    try {
+      const frame = encodeHexFrame(intentToHexChannels(intent));
+      setRobotIntent(intent);
+      setRobotStatus(await transport.write(frame));
+    } catch (error) {
+      setRobotError(error instanceof Error ? error.message : "Could not send V7RC command.");
+    }
+  }, []);
+
+  const sendRobotNeutral = useCallback(async () => {
+    await sendRobotIntent(createNeutralIntent());
+    setRobotMode("suggestion");
+  }, [sendRobotIntent]);
+
+  const sendRobotEmergencyStop = useCallback(async () => {
+    await sendRobotIntent({
+      ...createNeutralIntent(),
+      emergencyStop: true,
+      neutral: true,
+    });
+    setRobotMode("suggestion");
+  }, [sendRobotIntent]);
+
   useEffect(() => {
     if (sourceMode === "rtsp" || sourceMode === "youtube") {
       queueMicrotask(() => {
@@ -1101,6 +1225,89 @@ export default function Home() {
             }
             progress={llmProgress}
           />
+          <div className="robot-card">
+            <StatusCard
+              status={robotRuntimeStatus}
+              action={
+                <div className="status-actions">
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={connectMockRobot}
+                    disabled={robotStatus.connected}
+                  >
+                    Mock
+                  </button>
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={connectBluetoothRobot}
+                    disabled={robotStatus.connected}
+                  >
+                    BLE
+                  </button>
+                </div>
+              }
+            />
+            <div className="robot-controls">
+              <label className="inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={robotMode === "armed"}
+                  onChange={(event) => {
+                    const nextArmed = event.target.checked;
+                    setRobotMode(nextArmed ? "armed" : "suggestion");
+                    setRobotIntent((current) => ({
+                      ...current,
+                      autonomy: nextArmed,
+                      emergencyStop: false,
+                      neutral: !nextArmed,
+                      speedScale: nextArmed ? Math.max(current.speedScale, 0.25) : 0,
+                    }));
+                  }}
+                  disabled={!robotStatus.connected}
+                />
+                <span>{robotMode === "armed" ? "Armed" : "Suggestion"}</span>
+              </label>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => void sendRobotNeutral()}
+                disabled={!robotStatus.connected}
+              >
+                Neutral
+              </button>
+              <button
+                className="danger-button compact-button"
+                type="button"
+                onClick={() => void sendRobotEmergencyStop()}
+                disabled={!robotStatus.connected}
+              >
+                E-stop
+              </button>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={() => void disconnectRobot()}
+                disabled={!robotStatus.connected}
+              >
+                Disconnect
+              </button>
+            </div>
+            <div className="robot-packet">
+              <span>HEX preview</span>
+              <code>{robotStatus.lastPacket || robotPacketPreview}</code>
+            </div>
+            <div className="robot-channel-table">
+              {robotChannelPreview.map((channel) => (
+                <div className="robot-channel-row" key={channel.index}>
+                  <span>CH{channel.index}</span>
+                  <span>{channel.logical}</span>
+                  <span>{channel.pwmUs} us</span>
+                </div>
+              ))}
+            </div>
+          </div>
           <div className="object-list">
             <div className="panel-heading">
               <h2>Tracked Objects</h2>
