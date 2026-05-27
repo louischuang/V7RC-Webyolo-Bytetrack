@@ -314,7 +314,10 @@ Next planning target:
 - [ ] Run OpenCV.js lane detection in a Web Worker if possible.
 - [ ] Add ROI selection for lane/ground area.
 - [ ] Add perspective transform from camera view to bird's-eye view.
-- [ ] Add lane color and/or grayscale thresholding.
+- [x] Add first-pass lane candidate detector using low-resolution Canvas color/brightness thresholding.
+- [x] Draw lane candidates on the Camera overlay.
+- [x] Draw lane candidates on the Bird's-Eye View.
+- [ ] Add OpenCV.js lane color and/or grayscale thresholding.
 - [ ] Add blur + Canny edge detection.
 - [ ] Add HoughLinesP or contour/sliding-window lane extraction.
 - [ ] Estimate lane center and heading.

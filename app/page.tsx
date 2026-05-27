@@ -71,6 +71,13 @@ type RobotMode = "suggestion" | "armed";
 type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
 type LlmDevice = "wasm" | "webgpu";
+type NormalizedPoint = { x: number; y: number };
+type LaneDetection = {
+  left: [NormalizedPoint, NormalizedPoint] | null;
+  right: [NormalizedPoint, NormalizedPoint] | null;
+  confidence: number;
+  updatedAt: number;
+};
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
 const defaultLlmDevice: LlmDevice = process.env.NEXT_PUBLIC_LLM_DEVICE === "webgpu" ? "webgpu" : "wasm";
@@ -129,12 +136,14 @@ const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
   { id: "mission", label: "解任務" },
 ];
 const robotCommandIntervalMs = 30;
+const laneDetectionIntervalMs = 140;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const birdViewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const laneDetectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -145,6 +154,7 @@ export default function Home() {
   const robotDriveModeRef = useRef<V7rcDriveMode>("vehicle");
   const robotWriteInFlightRef = useRef(false);
   const robotLastStatusUpdateRef = useRef(0);
+  const laneDetectionRef = useRef<LaneDetection | null>(null);
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
       highThreshold: Number(process.env.NEXT_PUBLIC_TRACK_HIGH_THRESH ?? 0.6),
@@ -215,6 +225,7 @@ export default function Home() {
   const [robotTaskMode, setRobotTaskMode] = useState<RobotTaskMode>("autopilot");
   const [robotTaskStatus, setRobotTaskStatus] = useState<RobotTaskStatus>("idle");
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
+  const [laneConfidence, setLaneConfidence] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -254,11 +265,11 @@ export default function Home() {
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
-      return "Calibrated lane guide active; OpenCV lane extraction is next. YOLO safety stop remains active.";
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). OpenCV.js extraction is next.`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
-  }, [robotTaskMode]);
+  }, [laneConfidence, robotTaskMode]);
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -1105,6 +1116,14 @@ export default function Home() {
         context.save();
         context.scale(pixelRatio, pixelRatio);
         drawCameraLaneGuide(context, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
+        drawDetectedLaneLines(
+          context,
+          source,
+          rect.width,
+          rect.height,
+          mirrorPreview && sourceMode === "camera",
+          laneDetectionRef.current,
+        );
         drawDetections(context, tracksRef.current, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
         context.restore();
 
@@ -1133,7 +1152,15 @@ export default function Home() {
       const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
       const sourceDimensions = source && isSourceReady(source) ? getSourceDimensions(source) : null;
       if (canvas && context) {
-        drawBirdsEyeView(context, canvas, tracksRef.current, sourceDimensions, robotTaskMode, robotTaskStatus);
+        drawBirdsEyeView(
+          context,
+          canvas,
+          tracksRef.current,
+          sourceDimensions,
+          laneDetectionRef.current,
+          robotTaskMode,
+          robotTaskStatus,
+        );
       }
 
       animationFrame = requestAnimationFrame(paintBirdView);
@@ -1142,6 +1169,42 @@ export default function Home() {
     animationFrame = requestAnimationFrame(paintBirdView);
     return () => cancelAnimationFrame(animationFrame);
   }, [robotTaskMode, robotTaskStatus, sourceSurface]);
+
+  useEffect(() => {
+    let animationFrame = 0;
+    let lastDetectionAt = 0;
+    let lastStateUpdateAt = 0;
+
+    const detectLaneCandidates = () => {
+      const now = performance.now();
+      if (now - lastDetectionAt >= laneDetectionIntervalMs) {
+        const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
+        if (source && isSourceReady(source)) {
+          laneDetectionCanvasRef.current ??= document.createElement("canvas");
+          const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current);
+          laneDetectionRef.current = detection;
+
+          if (now - lastStateUpdateAt >= 500) {
+            lastStateUpdateAt = now;
+            setLaneConfidence(detection.confidence);
+          }
+        } else {
+          laneDetectionRef.current = null;
+          if (now - lastStateUpdateAt >= 500) {
+            lastStateUpdateAt = now;
+            setLaneConfidence(0);
+          }
+        }
+
+        lastDetectionAt = now;
+      }
+
+      animationFrame = requestAnimationFrame(detectLaneCandidates);
+    };
+
+    animationFrame = requestAnimationFrame(detectLaneCandidates);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -2019,6 +2082,7 @@ function drawBirdsEyeView(
   canvas: HTMLCanvasElement,
   tracks: Track[],
   sourceDimensions: { width: number; height: number } | null,
+  laneDetection: LaneDetection | null,
   taskMode: RobotTaskMode,
   taskStatus: RobotTaskStatus,
 ) {
@@ -2064,6 +2128,13 @@ function drawBirdsEyeView(
   context.stroke();
   context.setLineDash([]);
 
+  drawBirdViewDetectedLane(context, width, height, laneDetection, {
+    bottomWidth: roadBottomWidth,
+    bottomY: roadBottomY,
+    topWidth: roadTopWidth,
+    topY: roadTopY,
+  });
+
   context.fillStyle = taskStatus === "running" ? "#99f6e4" : "#94a3b8";
   context.font = "12px sans-serif";
   context.fillText(taskMode === "autopilot" ? "Autopilot lane view" : "Mission target view", 12, 22);
@@ -2098,6 +2169,38 @@ function drawBirdsEyeView(
     context.font = "12px sans-serif";
     context.fillText("No projected tracks", 12, height - 16);
   }
+}
+
+function drawBirdViewDetectedLane(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  laneDetection: LaneDetection | null,
+  destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
+) {
+  if (!laneDetection || laneDetection.confidence <= 0) {
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = "#fb923c";
+  context.lineWidth = 3;
+  context.lineCap = "round";
+
+  for (const line of [laneDetection.left, laneDetection.right]) {
+    if (!line) {
+      continue;
+    }
+
+    const start = projectNormalizedPointToBirdView(line[0], width, height, destinationRoad);
+    const end = projectNormalizedPointToBirdView(line[1], width, height, destinationRoad);
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+  }
+
+  context.restore();
 }
 
 function drawCameraLaneGuide(
@@ -2136,6 +2239,163 @@ function drawCameraLaneGuide(
   context.restore();
 }
 
+function drawDetectedLaneLines(
+  context: CanvasRenderingContext2D,
+  source: DetectableSource,
+  stageWidth: number,
+  stageHeight: number,
+  mirrorPreview: boolean,
+  laneDetection: LaneDetection | null,
+) {
+  if (!laneDetection || laneDetection.confidence <= 0) {
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = "#fb923c";
+  context.lineWidth = 3;
+  context.lineCap = "round";
+
+  for (const line of [laneDetection.left, laneDetection.right]) {
+    if (!line) {
+      continue;
+    }
+
+    const start = sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, line[0].x, line[0].y);
+    const end = sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, line[1].x, line[1].y);
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+  }
+
+  context.fillStyle = "#fb923c";
+  context.font = "12px ui-sans-serif, system-ui";
+  context.fillText(`lane candidate ${Math.round(laneDetection.confidence * 100)}%`, 12, stageHeight - 16);
+  context.restore();
+}
+
+function detectLaneLinesFromSource(source: DetectableSource, canvas: HTMLCanvasElement): LaneDetection {
+  const dimensions = getSourceDimensions(source);
+  const width = 240;
+  const height = Math.max(120, Math.round((dimensions.height / Math.max(1, dimensions.width)) * width));
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return emptyLaneDetection();
+  }
+
+  context.drawImage(source, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  const leftPoints: NormalizedPoint[] = [];
+  const rightPoints: NormalizedPoint[] = [];
+  const startY = Math.floor(height * birdViewSourceCalibration.topY);
+  const endY = Math.floor(height * birdViewSourceCalibration.bottomY);
+
+  for (let y = startY; y <= endY; y += 3) {
+    const normalizedY = y / height;
+    const road = sourceRoadAtY(normalizedY);
+    const leftX = Math.max(0, Math.floor(road.left * width));
+    const rightX = Math.min(width - 1, Math.ceil(road.right * width));
+    const centerX = Math.round((leftX + rightX) / 2);
+    const leftCandidate = findLanePixelCandidate(image.data, width, y, leftX, centerX - 4);
+    const rightCandidate = findLanePixelCandidate(image.data, width, y, centerX + 4, rightX);
+
+    if (leftCandidate) {
+      leftPoints.push({ x: leftCandidate.x / width, y: normalizedY });
+    }
+    if (rightCandidate) {
+      rightPoints.push({ x: rightCandidate.x / width, y: normalizedY });
+    }
+  }
+
+  const left = fitLaneLine(leftPoints);
+  const right = fitLaneLine(rightPoints);
+  const rowCount = Math.max(1, Math.floor((endY - startY) / 3));
+  const confidence = clamp01(
+    (Math.min(leftPoints.length, rowCount * 0.6) + Math.min(rightPoints.length, rowCount * 0.6)) / (rowCount * 1.2),
+  );
+
+  return {
+    confidence,
+    left,
+    right,
+    updatedAt: performance.now(),
+  };
+}
+
+function findLanePixelCandidate(data: Uint8ClampedArray, width: number, y: number, startX: number, endX: number) {
+  if (endX <= startX) {
+    return null;
+  }
+
+  let bestScore = 0;
+  let bestX = 0;
+
+  for (let x = startX; x <= endX; x += 1) {
+    const offset = (y * width + x) * 4;
+    const r = data[offset];
+    const g = data[offset + 1];
+    const b = data[offset + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    const whiteScore = luminance > 150 && max - min < 95 ? luminance - 145 : 0;
+    const yellowScore = r > 125 && g > 115 && b < 145 ? (r + g) / 2 - b : 0;
+    const score = Math.max(whiteScore, yellowScore);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestX = x;
+    }
+  }
+
+  return bestScore > 18 ? { score: bestScore, x: bestX } : null;
+}
+
+function fitLaneLine(points: NormalizedPoint[]): [NormalizedPoint, NormalizedPoint] | null {
+  if (points.length < 6) {
+    return null;
+  }
+
+  let sumY = 0;
+  let sumX = 0;
+  let sumYY = 0;
+  let sumYX = 0;
+  for (const point of points) {
+    sumY += point.y;
+    sumX += point.x;
+    sumYY += point.y * point.y;
+    sumYX += point.y * point.x;
+  }
+
+  const count = points.length;
+  const denominator = count * sumYY - sumY * sumY;
+  if (Math.abs(denominator) < 0.0001) {
+    return null;
+  }
+
+  const slope = (count * sumYX - sumY * sumX) / denominator;
+  const intercept = (sumX - slope * sumY) / count;
+  const yTop = Math.min(...points.map((point) => point.y));
+  const yBottom = Math.max(...points.map((point) => point.y));
+
+  return [
+    { x: clamp01(slope * yTop + intercept), y: yTop },
+    { x: clamp01(slope * yBottom + intercept), y: yBottom },
+  ];
+}
+
+function emptyLaneDetection(): LaneDetection {
+  return {
+    confidence: 0,
+    left: null,
+    right: null,
+    updatedAt: performance.now(),
+  };
+}
+
 function projectTrackToBirdView(
   track: Track,
   width: number,
@@ -2147,11 +2407,26 @@ function projectTrackToBirdView(
   const bottomY = track.box.y + track.box.height;
   const sourceWidth = sourceDimensions?.width ?? runtimeDefaults.yoloInputSize;
   const sourceHeight = sourceDimensions?.height ?? runtimeDefaults.yoloInputSize;
-  const normalizedX = clamp01(bottomCenterX / Math.max(1, sourceWidth));
-  const normalizedY = clamp01(bottomY / Math.max(1, sourceHeight));
-  const sourceRoad = sourceRoadAtY(normalizedY);
-  const lateral = clamp((normalizedX - sourceRoad.left) / Math.max(0.01, sourceRoad.right - sourceRoad.left), -0.35, 1.35);
-  const depth = clamp01((normalizedY - birdViewSourceCalibration.topY) / (birdViewSourceCalibration.bottomY - birdViewSourceCalibration.topY));
+  return projectNormalizedPointToBirdView(
+    {
+      x: clamp01(bottomCenterX / Math.max(1, sourceWidth)),
+      y: clamp01(bottomY / Math.max(1, sourceHeight)),
+    },
+    width,
+    height,
+    destinationRoad,
+  );
+}
+
+function projectNormalizedPointToBirdView(
+  point: NormalizedPoint,
+  width: number,
+  height: number,
+  destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
+) {
+  const sourceRoad = sourceRoadAtY(point.y);
+  const lateral = clamp((point.x - sourceRoad.left) / Math.max(0.01, sourceRoad.right - sourceRoad.left), -0.35, 1.35);
+  const depth = clamp01((point.y - birdViewSourceCalibration.topY) / (birdViewSourceCalibration.bottomY - birdViewSourceCalibration.topY));
   const easedDepth = depth * depth * (3 - 2 * depth);
   const destinationWidth = destinationRoad.topWidth + (destinationRoad.bottomWidth - destinationRoad.topWidth) * easedDepth;
   const destinationLeft = (width - destinationWidth) / 2;
@@ -2214,6 +2489,29 @@ function sourceCalibrationToStagePoints(
     bottomRight: toStagePoint(birdViewSourceCalibration.bottomRightX, birdViewSourceCalibration.bottomY),
     topLeft: toStagePoint(birdViewSourceCalibration.topLeftX, birdViewSourceCalibration.topY),
     topRight: toStagePoint(birdViewSourceCalibration.topRightX, birdViewSourceCalibration.topY),
+  };
+}
+
+function sourcePointToStagePoint(
+  source: DetectableSource,
+  stageWidth: number,
+  stageHeight: number,
+  mirrorPreview: boolean,
+  normalizedX: number,
+  normalizedY: number,
+) {
+  const dimensions = getSourceDimensions(source);
+  const videoRatio = dimensions.width / dimensions.height;
+  const stageRatio = stageWidth / stageHeight;
+  const drawWidth = stageRatio > videoRatio ? stageHeight * videoRatio : stageWidth;
+  const drawHeight = stageRatio > videoRatio ? stageHeight : stageWidth / videoRatio;
+  const offsetX = (stageWidth - drawWidth) / 2;
+  const offsetY = (stageHeight - drawHeight) / 2;
+  const stageX = offsetX + normalizedX * drawWidth;
+
+  return {
+    x: mirrorPreview ? stageWidth - stageX : stageX,
+    y: offsetY + normalizedY * drawHeight,
   };
 }
 
