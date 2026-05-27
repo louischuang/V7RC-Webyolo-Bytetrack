@@ -181,6 +181,70 @@
 - [ ] Confirm no remote network calls are required for inference after models are installed.
 - [ ] Confirm chat inference does not call a backend API.
 
+## Phase 11 - V7RC Protocol Planning
+
+- [x] Collect the current V7RC firmware/protocol specification.
+- [ ] Confirm BLE service UUID, command characteristic UUID, notification characteristic UUID, MTU, and write mode.
+- [x] Document V7RC command rules: 20-byte maximum, 3-character command code, `#` ending marker, and padding behavior.
+- [x] Document `HEX` 16-channel PWM format and `pwm_us = value * 10` conversion.
+- [x] Document `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` command options.
+- [ ] Confirm whether the robot firmware expects `HEX`, `SRV`, or `SRT` for drivetrain control.
+- [ ] Define normalized channel value ranges for motion, arm servos, binary modes, neutral, and emergency stop.
+- [ ] Confirm channel calibration for the first robot chassis and arm hardware.
+- [ ] Document final channel semantics for drivetrain, speed scale, arm joints, gripper/tool, autonomy enable, neutral, and e-stop.
+- [ ] Define neutral frame and command timeout behavior.
+- [ ] Define command rate limit and slew-rate limits for safe acceleration.
+- [ ] Define how firmware reports low battery, failsafe, or command rejection if supported.
+- [ ] Create a TypeScript `V7rcProtocol` encoder/decoder module.
+- [ ] Add unit tests for `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, `CMD`, packet length validation, and channel clamping.
+- [ ] Add a mock V7RC transport for UI and Gemma loop testing without hardware.
+
+## Phase 12 - Web Bluetooth Robot Link
+
+- [ ] Add Robot status card to the UI.
+- [ ] Add `Connect Robot` button using Chrome Web Bluetooth.
+- [ ] Add `Disconnect`, `Neutral`, and `E-stop` controls.
+- [ ] Show device name, connection state, last command time, and last protocol error.
+- [ ] Implement Bluetooth device filtering once V7RC service UUIDs are known.
+- [ ] Implement manual service/characteristic configuration fallback for early firmware builds.
+- [ ] Implement command characteristic writer.
+- [ ] Implement notification reader if the robot exposes acknowledgements or telemetry.
+- [ ] Send neutral frame when disconnecting.
+- [ ] Send neutral frame when the tab unloads or the perception loop stops.
+- [ ] Add reconnection and stale connection error handling.
+- [ ] Add Chrome secure-context guidance for production HTTPS deployment.
+
+## Phase 13 - Gemma Robot Action Loop
+
+- [ ] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
+- [ ] Add a goal editor for target object, target color, success condition, and safety constraints.
+- [ ] Add "suggestion mode" where Gemma proposes commands but Bluetooth transmission is disabled.
+- [ ] Update the Gemma system prompt to require strict action JSON.
+- [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
+- [ ] Add current track summary, target color hints, and recent command state to the Gemma prompt.
+- [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
+- [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
+- [ ] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
+- [ ] Add command preview UI showing proposed channel values before hardware transmission.
+- [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
+- [ ] Store goal/prompt/control settings in browser local storage.
+
+## Phase 14 - Closed-Loop Goal Execution
+
+- [ ] Implement first goal template: find a colored box.
+- [ ] Implement search state: slow rotate/scan until a candidate target appears.
+- [ ] Implement acquire state: verify target class, color, confidence, and ByteTrack stability.
+- [ ] Implement approach state: keep target centered with low-speed forward/turn commands.
+- [ ] Implement align state: reduce speed and center target before stopping.
+- [ ] Implement complete state: send neutral, stop autonomy, and report goal complete.
+- [ ] Implement unsafe state: send neutral/e-stop and require user confirmation.
+- [ ] Stop or slow down when a person is detected near the path.
+- [ ] Stop when target confidence drops below threshold for multiple rounds.
+- [ ] Add manual override that immediately disables autonomy and sends neutral.
+- [ ] Test closed-loop logic entirely in mock transport mode.
+- [ ] Test Bluetooth command transmission with wheels lifted or motors disabled.
+- [ ] Test first low-speed hardware run with a physical colored box target.
+
 ## Later Enhancements
 
 - [ ] Move YOLO inference loop to Web Worker.
@@ -199,3 +263,6 @@
 - [ ] Add WebRTC stream gateway mode for lower-latency robot control.
 - [ ] Add authenticated stream source support.
 - [ ] Add per-source presets for robot camera endpoints.
+- [ ] Add world memory for persistent target locations.
+- [ ] Add arm inverse kinematics and grasp planning after basic channel control is safe.
+- [ ] Add telemetry recording for perception, Gemma actions, protocol frames, and robot motion.

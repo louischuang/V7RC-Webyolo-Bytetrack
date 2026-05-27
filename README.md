@@ -1,6 +1,6 @@
 # V7RC WebYOLO ByteTrack
 
-Chrome-first local web app for webcam YOLO detection, ByteTrack object IDs, and browser-local Gemma4-E2B chat.
+Chrome-first local web app for webcam/stream YOLO detection, ByteTrack object IDs, browser-local Gemma4-E2B perception, and the next robot closed loop over Bluetooth through the V7RC protocol.
 
 ## Development
 
@@ -151,6 +151,64 @@ Source deep links are supported for unattended browser tests and robot launch fl
 http://localhost:3000/?source=youtube&autostart=1&url=https%3A%2F%2Fyoutu.be%2F...
 ```
 
+## Robot Control Roadmap
+
+The current app is still observation-first: camera/stream frames go through YOLO11n, ByteTrack, and Gemma4-E2B in Chrome. The next development stage adds a cautious robot control loop:
+
+```text
+Vision source -> YOLO/ByteTrack -> Gemma4-E2B action JSON -> safety controller -> V7RC channel frame -> Web Bluetooth robot link
+```
+
+Planned browser-side modules:
+
+- `RobotGoal`: stores the active mission, such as "find a red box".
+- `PerceptionState`: current frame, detections, tracks, color hints, and recent command state.
+- `GemmaAction`: structured LLM output with observation, goal status, target, motion intent, arm intent, and stop reason.
+- `SafetyController`: clamps speed/servo values, applies neutral timeout, validates confidence, and blocks motion unless autonomy is enabled.
+- `V7rcProtocol`: converts normalized intent values into V7RC command packets such as `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, or `CMD`.
+- `BluetoothTransport`: connects to the robot with Chrome Web Bluetooth and writes command frames to the configured BLE characteristic.
+
+V7RC protocol notes:
+
+- Each BLE command packet is 20 bytes or less.
+- The first 3 characters are the command code.
+- Every packet ends with `#`.
+- `HEX` is the preferred 16-channel PWM command: `HEX + 16 raw bytes + #`.
+- In `HEX`, payload byte 0 maps to channel 0 and byte 15 maps to channel 15.
+- `HEX` PWM conversion is `pwm_us = value * 10`, so byte values `100`, `150`, and `200` map to `1000 us`, `1500 us`, and `2000 us`.
+
+Reference: [V7RC IO Command Protocol](https://github.com/v7rc/V7RC-Protocol/blob/main/protocol.en.md).
+
+Initial logical channel semantics on top of `HEX` channel indices are planned as:
+
+| Channel | Meaning |
+| --- | --- |
+| `0` | Drive throttle |
+| `1` | Steering / yaw |
+| `2` | Strafe / lateral, optional |
+| `3` | Speed scale or mode |
+| `4` | Arm base yaw |
+| `5` | Arm shoulder |
+| `6` | Arm elbow |
+| `7` | Wrist / gripper |
+| `8` | Tool / auxiliary |
+| `9` | Autonomy enable, if firmware supports it |
+| `10` | Neutral / brake, if firmware supports it |
+| `11` | Emergency stop, if firmware supports it |
+| `12..15` | Reserved / neutral |
+
+The BLE service and characteristic UUIDs still need to be confirmed from the target firmware. Until then, the implementation should keep the Bluetooth transport configurable and include a mock transport for UI and Gemma loop testing without hardware.
+
+Safety rules for the first control MVP:
+
+- Bluetooth pairing must be user initiated.
+- Autonomy must be explicitly enabled before any motor command is sent.
+- The robot sends neutral on disconnect, tab close, stopped loop, invalid Gemma output, low confidence, target lost, or timeout.
+- Gemma proposes structured intent; it does not write raw motor bytes directly.
+- The first hardware tests should use low speed limits and suggestion mode before live motion.
+
+More details: [docs/robot-control.md](docs/robot-control.md).
+
 ## iPhone Camera on Mac
 
 On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone nearby, signed into the same Apple ID, with Wi-Fi and Bluetooth enabled. In Chrome, grant camera permission, then use `Refresh` in the Camera control if the iPhone does not appear immediately. The app marks iPhone/Continuity/Desk View devices in the camera picker and prefers them when no camera has been selected yet.
@@ -162,4 +220,4 @@ On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone 
 - Gemma4-E2B runs through browser-local Transformers.js ONNX/WebGPU generation in a Web Worker.
 - When `Include current frame` is enabled, the app captures the active source frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.
 - Gemma settings live behind the Gemma4-E2B settings button and are cached in browser `localStorage`.
-- The Gemma perception loop is controlled from the Gemma4-E2B card and keeps the current MVP observation-only.
+- The Gemma perception loop is controlled from the Gemma4-E2B card. Current builds are observation-only; the next stage adds suggestion mode, then gated Bluetooth control.
