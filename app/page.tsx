@@ -2059,7 +2059,12 @@ function drawBirdsEyeView(
   context.fillText(taskMode === "autopilot" ? "Autopilot lane view" : "Mission target view", 12, 22);
 
   for (const track of tracks.slice(0, 16)) {
-    const projected = projectTrackToBirdView(track, width, height, sourceDimensions);
+    const projected = projectTrackToBirdView(track, width, height, sourceDimensions, {
+      bottomWidth: roadBottomWidth,
+      bottomY: roadBottomY,
+      topWidth: roadTopWidth,
+      topY: roadTopY,
+    });
     const color = "#2dd4bf";
     context.fillStyle = color;
     context.strokeStyle = "#020617";
@@ -2090,6 +2095,7 @@ function projectTrackToBirdView(
   width: number,
   height: number,
   sourceDimensions: { width: number; height: number } | null,
+  destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
 ) {
   const bottomCenterX = track.box.x + track.box.width / 2;
   const bottomY = track.box.y + track.box.height;
@@ -2097,14 +2103,41 @@ function projectTrackToBirdView(
   const sourceHeight = sourceDimensions?.height ?? runtimeDefaults.yoloInputSize;
   const normalizedX = clamp01(bottomCenterX / Math.max(1, sourceWidth));
   const normalizedY = clamp01(bottomY / Math.max(1, sourceHeight));
-  const perspective = normalizedY * normalizedY;
-  const roadWidth = width * (0.34 + 0.48 * perspective);
-  const centerX = width / 2;
+  const sourceRoad = sourceRoadAtY(normalizedY);
+  const lateral = clamp((normalizedX - sourceRoad.left) / Math.max(0.01, sourceRoad.right - sourceRoad.left), -0.35, 1.35);
+  const depth = clamp01((normalizedY - birdViewSourceCalibration.topY) / (birdViewSourceCalibration.bottomY - birdViewSourceCalibration.topY));
+  const easedDepth = depth * depth * (3 - 2 * depth);
+  const destinationWidth = destinationRoad.topWidth + (destinationRoad.bottomWidth - destinationRoad.topWidth) * easedDepth;
+  const destinationLeft = (width - destinationWidth) / 2;
+  const destinationY = destinationRoad.topY + (destinationRoad.bottomY - destinationRoad.topY) * easedDepth;
 
   return {
-    x: centerX + (normalizedX - 0.5) * roadWidth,
-    y: height * (0.12 + 0.82 * normalizedY),
-    radius: Math.max(5, Math.min(13, 16 * perspective)),
+    x: destinationLeft + lateral * destinationWidth,
+    y: destinationY,
+    radius: Math.max(5, Math.min(13, 7 + 8 * easedDepth)),
+  };
+}
+
+const birdViewSourceCalibration = {
+  bottomLeftX: 0.08,
+  bottomRightX: 0.92,
+  bottomY: 0.92,
+  topLeftX: 0.42,
+  topRightX: 0.58,
+  topY: 0.56,
+};
+
+function sourceRoadAtY(normalizedY: number) {
+  const depth = clamp01(
+    (normalizedY - birdViewSourceCalibration.topY) /
+      (birdViewSourceCalibration.bottomY - birdViewSourceCalibration.topY),
+  );
+
+  return {
+    left: birdViewSourceCalibration.topLeftX + (birdViewSourceCalibration.bottomLeftX - birdViewSourceCalibration.topLeftX) * depth,
+    right:
+      birdViewSourceCalibration.topRightX +
+      (birdViewSourceCalibration.bottomRightX - birdViewSourceCalibration.topRightX) * depth,
   };
 }
 
@@ -2114,6 +2147,14 @@ function clamp01(value: number) {
   }
 
   return Math.max(0, Math.min(1, value));
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.max(min, Math.min(max, value));
 }
 
 function formatDuration(milliseconds: number) {
