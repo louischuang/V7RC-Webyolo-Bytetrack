@@ -157,6 +157,7 @@ const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
 const robotCommandIntervalMs = 30;
 const laneDetectionIntervalMs = 140;
 const birdViewDefaultTopY = 0.65;
+const birdViewDefaultTopWidth = 0.16;
 const birdViewDefaultBottomWidth = 0.9;
 
 export default function Home() {
@@ -177,7 +178,7 @@ export default function Home() {
   const robotLastStatusUpdateRef = useRef(0);
   const laneDetectionRef = useRef<LaneDetection | null>(null);
   const roadCalibrationRef = useRef<RoadCalibration>(
-    createManualRoadCalibration(birdViewDefaultTopY, birdViewDefaultBottomWidth),
+    createManualRoadCalibration(birdViewDefaultTopY, birdViewDefaultTopWidth, birdViewDefaultBottomWidth),
   );
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
@@ -251,6 +252,7 @@ export default function Home() {
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
   const [laneConfidence, setLaneConfidence] = useState(0);
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
+  const [roiTopWidth, setRoiTopWidth] = useState(birdViewDefaultTopWidth);
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [roiConfidence, setRoiConfidence] = useState(0);
 
@@ -292,7 +294,7 @@ export default function Home() {
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
-      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Adaptive ROI confidence ${Math.round(roiConfidence * 100)}%.`;
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%.`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
@@ -393,12 +395,12 @@ export default function Home() {
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
 
   useEffect(() => {
-    const manualCalibration = createManualRoadCalibration(roiTopY, roiBottomWidth);
+    const manualCalibration = createManualRoadCalibration(roiTopY, roiTopWidth, roiBottomWidth);
     roadCalibrationRef.current = manualCalibration;
     laneDetectionRef.current = laneDetectionRef.current
       ? { ...laneDetectionRef.current, road: manualCalibration, roiConfidence: 0 }
       : null;
-  }, [roiBottomWidth, roiTopY]);
+  }, [roiBottomWidth, roiTopWidth, roiTopY]);
 
   const stopCamera = useCallback(() => {
     if (gatewayStreamIdRef.current) {
@@ -1220,11 +1222,6 @@ export default function Home() {
         if (source && isSourceReady(source)) {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
           const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current);
-          roadCalibrationRef.current = blendRoadCalibration(
-            createManualRoadCalibration(roiTopY, roiBottomWidth),
-            roadCalibrationRef.current,
-            detection,
-          );
           detection.road = roadCalibrationRef.current;
           detection.roiConfidence = detection.confidence;
           laneDetectionRef.current = detection;
@@ -1251,7 +1248,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
-  }, [roiBottomWidth, roiTopY, sourceSurface]);
+  }, [roiBottomWidth, roiTopWidth, roiTopY, sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -1403,6 +1400,21 @@ export default function Home() {
                 <strong>{roiTopY.toFixed(2)}</strong>
               </label>
               <label>
+                <span>Top Width</span>
+                <input
+                  type="range"
+                  min="0.08"
+                  max="0.42"
+                  step="0.01"
+                  value={roiTopWidth}
+                  onChange={(event) => {
+                    setRoiConfidence(0);
+                    setRoiTopWidth(Number(event.target.value));
+                  }}
+                />
+                <strong>{roiTopWidth.toFixed(2)}</strong>
+              </label>
+              <label>
                 <span>Bottom Width</span>
                 <input
                   type="range"
@@ -1418,7 +1430,7 @@ export default function Home() {
                 <strong>{roiBottomWidth.toFixed(2)}</strong>
               </label>
             </div>
-            <p>YOLO/ByteTrack objects use box bottom-center projection. Adaptive ROI follows lane candidates and can be tuned here.</p>
+            <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
           </section>
         </aside>
 
@@ -2798,101 +2810,18 @@ function projectBirdPointToBirdView(
   };
 }
 
-function createManualRoadCalibration(topY: number, bottomWidth: number): RoadCalibration {
+function createManualRoadCalibration(topY: number, topWidth: number, bottomWidth: number): RoadCalibration {
   const safeTopY = clamp(topY, 0.5, 0.8);
+  const safeTopWidth = clamp(topWidth, 0.06, 0.48);
   const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
-  const topWidth = clamp(0.16 + (safeBottomWidth - 0.82) * 0.18, 0.12, 0.22);
 
   return {
     bottomLeftX: (1 - safeBottomWidth) / 2,
     bottomRightX: (1 + safeBottomWidth) / 2,
     bottomY: 0.93,
-    topLeftX: 0.5 - topWidth / 2,
-    topRightX: 0.5 + topWidth / 2,
+    topLeftX: 0.5 - safeTopWidth / 2,
+    topRightX: 0.5 + safeTopWidth / 2,
     topY: safeTopY,
-  };
-}
-
-function blendRoadCalibration(
-  manualCalibration: RoadCalibration,
-  currentCalibration: RoadCalibration,
-  laneDetection: LaneDetection,
-) {
-  if (laneDetection.sourcePaths.length === 0 || laneDetection.confidence < 0.18) {
-    return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
-  }
-
-  const topY = manualCalibration.topY;
-  const bottomY = manualCalibration.bottomY;
-  const topBounds = pathsBoundsAtY(laneDetection.sourcePaths, topY);
-  const bottomBounds = pathsBoundsAtY(laneDetection.sourcePaths, bottomY);
-
-  if (!topBounds || !bottomBounds) {
-    return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
-  }
-  const leftTop = topBounds.left;
-  const rightTop = topBounds.right;
-  const leftBottom = bottomBounds.left;
-  const rightBottom = bottomBounds.right;
-  const detectedBottomWidth = rightBottom - leftBottom;
-  const detectedTopWidth = rightTop - leftTop;
-
-  if (detectedBottomWidth < 0.2 || detectedTopWidth < 0.04 || leftTop >= rightTop || leftBottom >= rightBottom) {
-    return approachRoadCalibration(currentCalibration, manualCalibration, 0.05);
-  }
-
-  const confidence = clamp(laneDetection.confidence, 0.18, 0.85);
-  const marginTop = 0.035;
-  const marginBottom = 0.07;
-  const detectedCalibration: RoadCalibration = {
-    bottomLeftX: clamp(leftBottom - marginBottom, 0.01, 0.44),
-    bottomRightX: clamp(rightBottom + marginBottom, 0.56, 0.99),
-    bottomY,
-    topLeftX: clamp(leftTop - marginTop, 0.25, 0.49),
-    topRightX: clamp(rightTop + marginTop, 0.51, 0.75),
-    topY,
-  };
-  const blendWeight = 0.08 + confidence * 0.1;
-
-  return {
-    bottomLeftX: clamp(lerp(currentCalibration.bottomLeftX, detectedCalibration.bottomLeftX, blendWeight), 0.01, 0.44),
-    bottomRightX: clamp(lerp(currentCalibration.bottomRightX, detectedCalibration.bottomRightX, blendWeight), 0.56, 0.99),
-    bottomY,
-    topLeftX: clamp(lerp(currentCalibration.topLeftX, detectedCalibration.topLeftX, blendWeight), 0.25, 0.49),
-    topRightX: clamp(lerp(currentCalibration.topRightX, detectedCalibration.topRightX, blendWeight), 0.51, 0.75),
-    topY,
-  };
-}
-
-function approachRoadCalibration(from: RoadCalibration, to: RoadCalibration, weight: number): RoadCalibration {
-  return {
-    bottomLeftX: lerp(from.bottomLeftX, to.bottomLeftX, weight),
-    bottomRightX: lerp(from.bottomRightX, to.bottomRightX, weight),
-    bottomY: to.bottomY,
-    topLeftX: lerp(from.topLeftX, to.topLeftX, weight),
-    topRightX: lerp(from.topRightX, to.topRightX, weight),
-    topY: to.topY,
-  };
-}
-
-function pathsBoundsAtY(paths: NormalizedPoint[][], y: number) {
-  const candidates: Array<{ distance: number; x: number }> = [];
-
-  for (const path of paths) {
-    const range = pathYRange(path);
-    const distance = y < range.min ? range.min - y : y > range.max ? y - range.max : 0;
-    if (distance <= 0.16) {
-      candidates.push({ distance, x: pathXAtY(path, y) });
-    }
-  }
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return {
-    left: Math.min(...candidates.map((candidate) => candidate.x)),
-    right: Math.max(...candidates.map((candidate) => candidate.x)),
   };
 }
 
@@ -3006,10 +2935,6 @@ function clamp(value: number, min: number, max: number) {
   }
 
   return Math.max(min, Math.min(max, value));
-}
-
-function lerp(from: number, to: number, weight: number) {
-  return from + (to - from) * clamp01(weight);
 }
 
 function formatDuration(milliseconds: number) {
