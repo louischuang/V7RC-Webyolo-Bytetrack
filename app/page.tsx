@@ -157,6 +157,7 @@ const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
 const robotCommandIntervalMs = 30;
 const laneDetectionIntervalMs = 140;
 const birdViewDefaultTopY = 0.65;
+const birdViewDefaultTopCenterX = 0.5;
 const birdViewDefaultTopWidth = 0.16;
 const birdViewDefaultBottomWidth = 0.9;
 const birdViewDefaultHeightScale = 1.5;
@@ -181,7 +182,12 @@ export default function Home() {
   const robotLastStatusUpdateRef = useRef(0);
   const laneDetectionRef = useRef<LaneDetection | null>(null);
   const roadCalibrationRef = useRef<RoadCalibration>(
-    createManualRoadCalibration(birdViewDefaultTopY, birdViewDefaultTopWidth, birdViewDefaultBottomWidth),
+    createManualRoadCalibration(
+      birdViewDefaultTopY,
+      birdViewDefaultTopCenterX,
+      birdViewDefaultTopWidth,
+      birdViewDefaultBottomWidth,
+    ),
   );
   const trackerRef = useRef<ByteTracker>(
     new ByteTracker({
@@ -255,6 +261,7 @@ export default function Home() {
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
   const [laneConfidence, setLaneConfidence] = useState(0);
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
+  const [roiTopCenterX, setRoiTopCenterX] = useState(birdViewDefaultTopCenterX);
   const [roiTopWidth, setRoiTopWidth] = useState(birdViewDefaultTopWidth);
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
@@ -399,12 +406,12 @@ export default function Home() {
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
 
   useEffect(() => {
-    const manualCalibration = createManualRoadCalibration(roiTopY, roiTopWidth, roiBottomWidth);
+    const manualCalibration = createManualRoadCalibration(roiTopY, roiTopCenterX, roiTopWidth, roiBottomWidth);
     roadCalibrationRef.current = manualCalibration;
     laneDetectionRef.current = laneDetectionRef.current
       ? { ...laneDetectionRef.current, road: manualCalibration, roiConfidence: 0 }
       : null;
-  }, [roiBottomWidth, roiTopWidth, roiTopY]);
+  }, [roiBottomWidth, roiTopCenterX, roiTopWidth, roiTopY]);
 
   const stopCamera = useCallback(() => {
     if (gatewayStreamIdRef.current) {
@@ -1252,7 +1259,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
-  }, [roiBottomWidth, roiTopWidth, roiTopY, sourceSurface]);
+  }, [roiBottomWidth, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -1420,6 +1427,21 @@ export default function Home() {
                   }}
                 />
                 <strong>{roiTopY.toFixed(2)}</strong>
+              </label>
+              <label>
+                <span>Top Center</span>
+                <input
+                  type="range"
+                  min="0.35"
+                  max="0.65"
+                  step="0.01"
+                  value={roiTopCenterX}
+                  onChange={(event) => {
+                    setRoiConfidence(0);
+                    setRoiTopCenterX(Number(event.target.value));
+                  }}
+                />
+                <strong>{roiTopCenterX.toFixed(2)}</strong>
               </label>
               <label>
                 <span>Top Width</span>
@@ -2630,11 +2652,12 @@ function fitLanePaths(points: NormalizedPoint[]): NormalizedPoint[][] {
   const sorted = [...points].sort((a, b) => a.y - b.y);
   const rawSegments: NormalizedPoint[][] = [];
   let currentSegment: NormalizedPoint[] = [];
-  const maxGapY = 0.035;
+  const maxGapY = 0.16;
+  const maxGapX = 0.09;
 
   for (const point of sorted) {
     const previous = currentSegment.at(-1);
-    if (previous && point.y - previous.y > maxGapY) {
+    if (previous && (point.y - previous.y > maxGapY || Math.abs(point.x - previous.x) > maxGapX)) {
       rawSegments.push(currentSegment);
       currentSegment = [];
     }
@@ -2832,8 +2855,14 @@ function projectBirdPointToBirdView(
   };
 }
 
-function createManualRoadCalibration(topY: number, topWidth: number, bottomWidth: number): RoadCalibration {
+function createManualRoadCalibration(
+  topY: number,
+  topCenterX: number,
+  topWidth: number,
+  bottomWidth: number,
+): RoadCalibration {
   const safeTopY = clamp(topY, 0.5, 0.8);
+  const safeTopCenterX = clamp(topCenterX, 0.25, 0.75);
   const safeTopWidth = clamp(topWidth, 0.06, 0.48);
   const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
 
@@ -2841,8 +2870,8 @@ function createManualRoadCalibration(topY: number, topWidth: number, bottomWidth
     bottomLeftX: (1 - safeBottomWidth) / 2,
     bottomRightX: (1 + safeBottomWidth) / 2,
     bottomY: 0.93,
-    topLeftX: 0.5 - safeTopWidth / 2,
-    topRightX: 0.5 + safeTopWidth / 2,
+    topLeftX: clamp(safeTopCenterX - safeTopWidth / 2, 0.02, 0.92),
+    topRightX: clamp(safeTopCenterX + safeTopWidth / 2, 0.08, 0.98),
     topY: safeTopY,
   };
 }
