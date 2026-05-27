@@ -81,8 +81,8 @@ type RoadCalibration = {
   topY: number;
 };
 type LaneDetection = {
-  left: [NormalizedPoint, NormalizedPoint] | null;
-  right: [NormalizedPoint, NormalizedPoint] | null;
+  left: NormalizedPoint[] | null;
+  right: NormalizedPoint[] | null;
   confidence: number;
   roiConfidence: number;
   road: RoadCalibration;
@@ -2261,18 +2261,16 @@ function drawBirdViewDetectedLane(
   context.strokeStyle = "#fb923c";
   context.lineWidth = 3;
   context.lineCap = "round";
+  context.lineJoin = "round";
 
-  for (const line of [laneDetection.left, laneDetection.right]) {
-    if (!line) {
+  for (const path of [laneDetection.left, laneDetection.right]) {
+    if (!path) {
       continue;
     }
 
-    const start = projectNormalizedPointToBirdView(line[0], width, height, destinationRoad, roadCalibration);
-    const end = projectNormalizedPointToBirdView(line[1], width, height, destinationRoad, roadCalibration);
-    context.beginPath();
-    context.moveTo(start.x, start.y);
-    context.lineTo(end.x, end.y);
-    context.stroke();
+    drawProjectedLanePath(context, path, (point) =>
+      projectNormalizedPointToBirdView(point, width, height, destinationRoad, roadCalibration),
+    );
   }
 
   context.restore();
@@ -2331,24 +2329,46 @@ function drawDetectedLaneLines(
   context.strokeStyle = "#fb923c";
   context.lineWidth = 3;
   context.lineCap = "round";
+  context.lineJoin = "round";
 
-  for (const line of [laneDetection.left, laneDetection.right]) {
-    if (!line) {
+  for (const path of [laneDetection.left, laneDetection.right]) {
+    if (!path) {
       continue;
     }
 
-    const start = sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, line[0].x, line[0].y);
-    const end = sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, line[1].x, line[1].y);
-    context.beginPath();
-    context.moveTo(start.x, start.y);
-    context.lineTo(end.x, end.y);
-    context.stroke();
+    drawProjectedLanePath(context, path, (point) =>
+      sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
+    );
   }
 
   context.fillStyle = "#fb923c";
   context.font = "12px ui-sans-serif, system-ui";
   context.fillText(`lane candidate ${Math.round(laneDetection.confidence * 100)}%`, 12, stageHeight - 16);
   context.restore();
+}
+
+function drawProjectedLanePath(
+  context: CanvasRenderingContext2D,
+  path: NormalizedPoint[],
+  project: (point: NormalizedPoint) => { x: number; y: number },
+) {
+  if (path.length < 2) {
+    return;
+  }
+
+  const projected = path.map(project);
+  context.beginPath();
+  context.moveTo(projected[0].x, projected[0].y);
+
+  for (let index = 1; index < projected.length - 1; index += 1) {
+    const current = projected[index];
+    const next = projected[index + 1];
+    context.quadraticCurveTo(current.x, current.y, (current.x + next.x) / 2, (current.y + next.y) / 2);
+  }
+
+  const last = projected[projected.length - 1];
+  context.lineTo(last.x, last.y);
+  context.stroke();
 }
 
 function detectLaneLinesFromSource(
@@ -2390,8 +2410,8 @@ function detectLaneLinesFromSource(
     }
   }
 
-  const left = fitLaneLine(leftPoints);
-  const right = fitLaneLine(rightPoints);
+  const left = fitLanePath(leftPoints);
+  const right = fitLanePath(rightPoints);
   const rowCount = Math.max(1, Math.floor((endY - startY) / 3));
   const confidence = clamp01(
     (Math.min(leftPoints.length, rowCount * 0.6) + Math.min(rightPoints.length, rowCount * 0.6)) / (rowCount * 1.2),
@@ -2436,37 +2456,40 @@ function findLanePixelCandidate(data: Uint8ClampedArray, width: number, y: numbe
   return bestScore > 18 ? { score: bestScore, x: bestX } : null;
 }
 
-function fitLaneLine(points: NormalizedPoint[]): [NormalizedPoint, NormalizedPoint] | null {
+function fitLanePath(points: NormalizedPoint[]): NormalizedPoint[] | null {
   if (points.length < 6) {
     return null;
   }
 
-  let sumY = 0;
-  let sumX = 0;
-  let sumYY = 0;
-  let sumYX = 0;
-  for (const point of points) {
-    sumY += point.y;
-    sumX += point.x;
-    sumYY += point.y * point.y;
-    sumYX += point.y * point.x;
+  const sorted = [...points].sort((a, b) => a.y - b.y);
+  const bucketSize = 4;
+  const bucketed: NormalizedPoint[] = [];
+
+  for (let index = 0; index < sorted.length; index += bucketSize) {
+    const bucket = sorted.slice(index, index + bucketSize);
+    const average = bucket.reduce(
+      (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+      { x: 0, y: 0 },
+    );
+    bucketed.push({
+      x: clamp01(average.x / bucket.length),
+      y: clamp01(average.y / bucket.length),
+    });
   }
 
-  const count = points.length;
-  const denominator = count * sumYY - sumY * sumY;
-  if (Math.abs(denominator) < 0.0001) {
+  if (bucketed.length < 3) {
     return null;
   }
 
-  const slope = (count * sumYX - sumY * sumX) / denominator;
-  const intercept = (sumX - slope * sumY) / count;
-  const yTop = Math.min(...points.map((point) => point.y));
-  const yBottom = Math.max(...points.map((point) => point.y));
+  return bucketed.map((point, index) => {
+    const previous = bucketed[Math.max(0, index - 1)];
+    const next = bucketed[Math.min(bucketed.length - 1, index + 1)];
 
-  return [
-    { x: clamp01(slope * yTop + intercept), y: yTop },
-    { x: clamp01(slope * yBottom + intercept), y: yBottom },
-  ];
+    return {
+      x: clamp01((previous.x + point.x * 2 + next.x) / 4),
+      y: point.y,
+    };
+  });
 }
 
 function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
@@ -2552,10 +2575,10 @@ function blendRoadCalibration(
 
   const topY = manualCalibration.topY;
   const bottomY = manualCalibration.bottomY;
-  const leftTop = lineXAtY(laneDetection.left, topY);
-  const rightTop = lineXAtY(laneDetection.right, topY);
-  const leftBottom = lineXAtY(laneDetection.left, bottomY);
-  const rightBottom = lineXAtY(laneDetection.right, bottomY);
+  const leftTop = pathXAtY(laneDetection.left, topY);
+  const rightTop = pathXAtY(laneDetection.right, topY);
+  const leftBottom = pathXAtY(laneDetection.left, bottomY);
+  const rightBottom = pathXAtY(laneDetection.right, bottomY);
   const detectedBottomWidth = rightBottom - leftBottom;
   const detectedTopWidth = rightTop - leftTop;
 
@@ -2597,10 +2620,22 @@ function approachRoadCalibration(from: RoadCalibration, to: RoadCalibration, wei
   };
 }
 
-function lineXAtY(line: [NormalizedPoint, NormalizedPoint], y: number) {
-  const [start, end] = line;
-  const ratio = clamp01((y - start.y) / Math.max(0.001, end.y - start.y));
-  return clamp01(start.x + (end.x - start.x) * ratio);
+function pathXAtY(path: NormalizedPoint[], y: number) {
+  const sorted = [...path].sort((a, b) => a.y - b.y);
+  if (y <= sorted[0].y) {
+    return sorted[0].x;
+  }
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (y <= current.y) {
+      const ratio = clamp01((y - previous.y) / Math.max(0.001, current.y - previous.y));
+      return clamp01(previous.x + (current.x - previous.x) * ratio);
+    }
+  }
+
+  return sorted[sorted.length - 1].x;
 }
 
 function sourceRoadAtY(normalizedY: number, roadCalibration: RoadCalibration) {
