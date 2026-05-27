@@ -47,6 +47,25 @@ Known browser constraints:
 - Production should use HTTPS.
 - The app must handle disconnects and page unload by sending neutral when possible.
 
+## V7RC BLE UART UUIDs
+
+V7RC uses BLE UART-style characteristics:
+
+| Direction | UUID | Property |
+| --- | --- | --- |
+| Service | `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` | BLE service |
+| RX | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` | Write / Write Without Response |
+| TX | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` | Notify |
+
+The Web Bluetooth transport should:
+
+- Request devices with the service UUID filter.
+- Open the service after GATT connection.
+- Write encoded V7RC command packets to RX.
+- Prefer Write Without Response for low-latency command streaming when available, while keeping Write as a fallback.
+- Subscribe to TX notifications for acknowledgements, telemetry, or firmware messages.
+- Send neutral before disconnect when possible.
+
 ## V7RC Protocol Adapter
 
 The V7RC IO Command Protocol uses compact command strings for BLE-sized packets:
@@ -65,7 +84,7 @@ Relevant commands:
 - `SRT`: tank mode based on basic PWM, where firmware converts CH1 and CH2 to tank-control signals.
 - `CMD`: pass-through custom command with up to 16 characters, padded with spaces.
 
-The BLE service and characteristic UUIDs are still firmware-specific and must be confirmed for the target robot. Keep the transport configurable:
+The BLE service and characteristic UUIDs are now known, but the transport should keep them configurable for firmware variants:
 
 ```ts
 type V7rcChannelFrame = {

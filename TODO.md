@@ -184,7 +184,8 @@
 ## Phase 11 - V7RC Protocol Planning
 
 - [x] Collect the current V7RC firmware/protocol specification.
-- [ ] Confirm BLE service UUID, command characteristic UUID, notification characteristic UUID, MTU, and write mode.
+- [x] Confirm BLE service UUID, command characteristic UUID, notification characteristic UUID, and write mode.
+- [ ] Confirm effective MTU and command pacing limits on the target robot firmware.
 - [x] Document V7RC command rules: 20-byte maximum, 3-character command code, `#` ending marker, and padding behavior.
 - [x] Document `HEX` 16-channel PWM format and `pwm_us = value * 10` conversion.
 - [x] Document `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` command options.
@@ -205,8 +206,9 @@
 - [ ] Add `Connect Robot` button using Chrome Web Bluetooth.
 - [ ] Add `Disconnect`, `Neutral`, and `E-stop` controls.
 - [ ] Show device name, connection state, last command time, and last protocol error.
-- [ ] Implement Bluetooth device filtering once V7RC service UUIDs are known.
-- [ ] Implement manual service/characteristic configuration fallback for early firmware builds.
+- [x] Document V7RC BLE UART UUIDs for service, RX, and TX characteristics.
+- [ ] Implement Bluetooth device filtering with service UUID `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`.
+- [ ] Implement manual service/characteristic configuration fallback for firmware variants.
 - [ ] Implement command characteristic writer.
 - [ ] Implement notification reader if the robot exposes acknowledgements or telemetry.
 - [ ] Send neutral frame when disconnecting.

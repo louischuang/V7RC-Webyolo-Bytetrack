@@ -179,6 +179,14 @@ V7RC protocol notes:
 
 Reference: [V7RC IO Command Protocol](https://github.com/v7rc/V7RC-Protocol/blob/main/protocol.en.md).
 
+V7RC BLE UART-style UUIDs:
+
+| Direction | UUID | Property |
+| --- | --- | --- |
+| Service | `6E400001-B5A3-F393-E0A9-E50E24DCCA9E` | BLE service |
+| RX | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` | Write / Write Without Response |
+| TX | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` | Notify |
+
 Initial logical channel semantics on top of `HEX` channel indices are planned as:
 
 | Channel | Meaning |
@@ -197,7 +205,7 @@ Initial logical channel semantics on top of `HEX` channel indices are planned as
 | `11` | Emergency stop, if firmware supports it |
 | `12..15` | Reserved / neutral |
 
-The BLE service and characteristic UUIDs still need to be confirmed from the target firmware. Until then, the implementation should keep the Bluetooth transport configurable and include a mock transport for UI and Gemma loop testing without hardware.
+The implementation should use the service UUID for Web Bluetooth device filtering, write V7RC command packets to RX, and subscribe to TX notifications for acknowledgements or telemetry if the firmware emits them. A mock transport is still needed for UI and Gemma loop testing without hardware.
 
 Safety rules for the first control MVP:
 

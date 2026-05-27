@@ -120,7 +120,10 @@ Planned UI/state:
 - Robot card in the side panel or top menu.
 - `Connect`, `Disconnect`, `Autonomy`, `Neutral`, and `E-stop` controls.
 - Device status: disconnected, connecting, connected, armed, autonomy active, error.
-- BLE service/characteristic configuration once the V7RC firmware UUIDs are known.
+- BLE UART-style service and characteristic wiring:
+  - Service: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+  - RX command characteristic: `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` with Write / Write Without Response.
+  - TX notification characteristic: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` with Notify.
 - Command log with last command packet, write timestamp, and acknowledgement/error if the firmware exposes notifications.
 
 Important constraints:
@@ -169,7 +172,7 @@ Initial logical channel map on top of `HEX` channel indices:
 
 Protocol adapter tasks:
 
-- Define the actual BLE service UUID, command characteristic UUID, notification characteristic UUID, and write mode used by the robot firmware.
+- Use the V7RC BLE UART service UUID and RX/TX characteristics for Web Bluetooth filtering, writes, and notifications.
 - Implement `HEX`, `DEG`, `SRV`, `SR2`, `SRT`, and `CMD` encoders with exact byte-length validation.
 - Keep `HEX` as the first full-channel command path because it controls 16 PWM channels in one 20-byte frame.
 - Confirm whether the target firmware expects `HEX` raw bytes, text commands such as `SRV`, or tank mode `SRT` for drivetrain control.
