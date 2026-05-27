@@ -68,6 +68,8 @@ type TrackRow = {
 };
 
 type RobotMode = "suggestion" | "armed";
+type RobotTaskMode = "autopilot" | "mission";
+type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
 type LlmDevice = "wasm" | "webgpu";
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
@@ -122,12 +124,17 @@ const robotDriveModes: Array<{ id: V7rcDriveMode; label: string }> = [
   { id: "mecanum", label: "麥克納姆輪" },
   { id: "tank", label: "坦克" },
 ];
+const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
+  { id: "autopilot", label: "自動駕駛" },
+  { id: "mission", label: "解任務" },
+];
 const robotCommandIntervalMs = 30;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const birdViewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -205,6 +212,9 @@ export default function Home() {
   const [robotError, setRobotError] = useState("");
   const [robotIntent, setRobotIntent] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [robotDriveMode, setRobotDriveMode] = useState<V7rcDriveMode>("vehicle");
+  const [robotTaskMode, setRobotTaskMode] = useState<RobotTaskMode>("autopilot");
+  const [robotTaskStatus, setRobotTaskStatus] = useState<RobotTaskStatus>("idle");
+  const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -241,6 +251,14 @@ export default function Home() {
     () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(robotIntent, robotDriveMode))),
     [robotDriveMode, robotIntent],
   );
+  const robotTaskRunning = robotTaskStatus === "running";
+  const robotTaskDetail = useMemo(() => {
+    if (robotTaskMode === "autopilot") {
+      return "OpenCV lane-follow pipeline pending; YOLO safety stop remains active.";
+    }
+
+    return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
+  }, [robotTaskMode]);
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -897,6 +915,23 @@ export default function Home() {
     setRobotMode("suggestion");
   }, [sendRobotIntent]);
 
+  const toggleRobotTask = useCallback(() => {
+    if (robotTaskStatus === "running") {
+      setRobotTaskStatus("idle");
+      setRobotTaskMessage("任務已停止，等待下一次 Start。");
+      sendRobotIntent(createNeutralIntent());
+      return;
+    }
+
+    setRobotTaskStatus("running");
+    if (robotTaskMode === "autopilot") {
+      setRobotTaskMessage("自動駕駛啟動：等待 OpenCV 車道線與 YOLO 安全狀態。");
+      return;
+    }
+
+    setRobotTaskMessage("解任務啟動：等待 Gemma 產生短 JSON 動作計畫。");
+  }, [robotTaskMode, robotTaskStatus, sendRobotIntent]);
+
   useEffect(() => {
     if (!robotStatus.connected) {
       return;
@@ -1088,6 +1123,25 @@ export default function Home() {
     return () => cancelAnimationFrame(animationFrame);
   }, [mirrorPreview, sourceMode, sourceSurface]);
 
+  useEffect(() => {
+    let animationFrame = 0;
+
+    const paintBirdView = () => {
+      const canvas = birdViewCanvasRef.current;
+      const context = canvas?.getContext("2d");
+      const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
+      const sourceDimensions = source && isSourceReady(source) ? getSourceDimensions(source) : null;
+      if (canvas && context) {
+        drawBirdsEyeView(context, canvas, tracksRef.current, sourceDimensions, robotTaskMode, robotTaskStatus);
+      }
+
+      animationFrame = requestAnimationFrame(paintBirdView);
+    };
+
+    animationFrame = requestAnimationFrame(paintBirdView);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [robotTaskMode, robotTaskStatus, sourceSurface]);
+
   return (
     <main className="app-shell">
       <header className="top-menu">
@@ -1154,6 +1208,72 @@ export default function Home() {
             </div>
           </section>
         </div>
+
+        <aside className="task-panel">
+          <section className="task-card">
+            <div className="task-card-title">
+              <div>
+                <h2>Robot Task</h2>
+                <p>{robotTaskMessage}</p>
+              </div>
+              <button
+                className={`icon-button task-start-button ${robotTaskRunning ? "active" : ""}`}
+                type="button"
+                onClick={toggleRobotTask}
+                title={robotTaskRunning ? "Stop task" : "Start task"}
+                aria-label={robotTaskRunning ? "Stop task" : "Start task"}
+              >
+                {robotTaskRunning ? (
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M8 8h8v8H8z" />
+                  </svg>
+                ) : (
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="m8 5 11 7-11 7V5z" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <div className="segmented-control task-mode-control">
+              {robotTaskModes.map((mode) => (
+                <button
+                  className={robotTaskMode === mode.id ? "active" : ""}
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    setRobotTaskMode(mode.id);
+                    setRobotTaskStatus("idle");
+                    setRobotTaskMessage(mode.id === "autopilot" ? "自動駕駛待命。" : "解任務待命。");
+                  }}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <div className="task-state-grid">
+              <div>
+                <span>Status</span>
+                <strong>{robotTaskStatus.toUpperCase()}</strong>
+              </div>
+              <div>
+                <span>Mode</span>
+                <strong>{robotTaskMode === "autopilot" ? "Autopilot" : "Mission"}</strong>
+              </div>
+            </div>
+            <p className="task-detail">{robotTaskDetail}</p>
+          </section>
+
+          <section className="birdview-card">
+            <div className="panel-heading">
+              <h2>Bird&apos;s-Eye View</h2>
+              <span>{tracksRef.current.length}</span>
+            </div>
+            <div className="birdview-stage">
+              <canvas ref={birdViewCanvasRef} width={320} height={220} aria-label="Bird's-eye view" />
+            </div>
+            <p>YOLO/ByteTrack objects are projected from each box bottom-center point. Lane overlay will use OpenCV.js next.</p>
+          </section>
+        </aside>
 
         <aside className="side-panel">
           <div className="camera-source-card">
@@ -1891,6 +2011,109 @@ function buildLocalFallbackResponse(sceneSummary: string, diagnostics: string[])
 function isDegenerateLlmResponse(response: string) {
   const text = response.trim();
   return text.length > 0 && text.length < 8 && !/[a-z0-9\u4e00-\u9fff]/iu.test(text);
+}
+
+function drawBirdsEyeView(
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  tracks: Track[],
+  sourceDimensions: { width: number; height: number } | null,
+  taskMode: RobotTaskMode,
+  taskStatus: RobotTaskStatus,
+) {
+  const { width, height } = canvas;
+  context.clearRect(0, 0, width, height);
+
+  const gradient = context.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, "#18202b");
+  gradient.addColorStop(1, "#06080d");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+
+  const roadTopWidth = width * 0.34;
+  const roadBottomWidth = width * 0.82;
+  const roadTopY = height * 0.12;
+  const roadBottomY = height * 0.94;
+  context.beginPath();
+  context.moveTo((width - roadTopWidth) / 2, roadTopY);
+  context.lineTo((width + roadTopWidth) / 2, roadTopY);
+  context.lineTo((width + roadBottomWidth) / 2, roadBottomY);
+  context.lineTo((width - roadBottomWidth) / 2, roadBottomY);
+  context.closePath();
+  context.fillStyle = "rgba(30, 41, 59, 0.92)";
+  context.fill();
+  context.strokeStyle = "rgba(148, 163, 184, 0.28)";
+  context.lineWidth = 1;
+  context.stroke();
+
+  context.setLineDash([10, 10]);
+  context.strokeStyle = "rgba(226, 232, 240, 0.5)";
+  context.beginPath();
+  context.moveTo(width / 2, roadTopY + 10);
+  context.lineTo(width / 2, roadBottomY - 10);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = taskStatus === "running" ? "#99f6e4" : "#94a3b8";
+  context.font = "12px sans-serif";
+  context.fillText(taskMode === "autopilot" ? "Autopilot lane view" : "Mission target view", 12, 22);
+
+  for (const track of tracks.slice(0, 16)) {
+    const projected = projectTrackToBirdView(track, width, height, sourceDimensions);
+    const color = "#2dd4bf";
+    context.fillStyle = color;
+    context.strokeStyle = "#020617";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(projected.x, projected.y, projected.radius, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+
+    const label = `${track.id} ${track.label}`;
+    context.font = "11px sans-serif";
+    const labelWidth = context.measureText(label).width + 8;
+    context.fillStyle = color;
+    context.fillRect(projected.x + 8, projected.y - 9, labelWidth, 16);
+    context.fillStyle = "#020617";
+    context.fillText(label, projected.x + 12, projected.y + 3);
+  }
+
+  if (tracks.length === 0) {
+    context.fillStyle = "#94a3b8";
+    context.font = "12px sans-serif";
+    context.fillText("No projected tracks", 12, height - 16);
+  }
+}
+
+function projectTrackToBirdView(
+  track: Track,
+  width: number,
+  height: number,
+  sourceDimensions: { width: number; height: number } | null,
+) {
+  const bottomCenterX = track.box.x + track.box.width / 2;
+  const bottomY = track.box.y + track.box.height;
+  const sourceWidth = sourceDimensions?.width ?? runtimeDefaults.yoloInputSize;
+  const sourceHeight = sourceDimensions?.height ?? runtimeDefaults.yoloInputSize;
+  const normalizedX = clamp01(bottomCenterX / Math.max(1, sourceWidth));
+  const normalizedY = clamp01(bottomY / Math.max(1, sourceHeight));
+  const perspective = normalizedY * normalizedY;
+  const roadWidth = width * (0.34 + 0.48 * perspective);
+  const centerX = width / 2;
+
+  return {
+    x: centerX + (normalizedX - 0.5) * roadWidth,
+    y: height * (0.12 + 0.82 * normalizedY),
+    radius: Math.max(5, Math.min(13, 16 * perspective)),
+  };
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 function formatDuration(milliseconds: number) {

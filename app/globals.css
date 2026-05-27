@@ -306,7 +306,7 @@ input {
 .workspace {
   display: grid;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(360px, 1fr) 320px 320px;
 }
 
 .main-panel {
@@ -369,21 +369,115 @@ input {
   text-align: center;
 }
 
+.task-panel,
 .side-panel {
   display: grid;
   align-content: start;
   gap: 12px;
-  border-left: 1px solid var(--line);
   background: #10141b;
   padding: 16px;
 }
 
+.task-panel {
+  border-left: 1px solid var(--line);
+}
+
+.side-panel {
+  border-left: 1px solid var(--line);
+}
+
 .status-card,
 .object-list,
-.chat-panel {
+.chat-panel,
+.task-card,
+.birdview-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
+}
+
+.task-card,
+.birdview-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.task-card-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.task-card-title p,
+.task-detail,
+.birdview-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-start-button {
+  width: 36px;
+  height: 34px;
+  border-color: rgba(45, 212, 191, 0.45);
+}
+
+.task-start-button.active {
+  border-color: rgba(244, 63, 94, 0.55);
+  background: rgba(244, 63, 94, 0.16);
+}
+
+.task-mode-control {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.task-state-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-state-grid div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 9px;
+}
+
+.task-state-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.task-state-grid strong {
+  font-size: 12px;
+}
+
+.birdview-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.birdview-stage {
+  padding: 12px;
+}
+
+.birdview-stage canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 11;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #05070a;
+}
+
+.birdview-card p {
+  padding: 0 12px 12px;
 }
 
 .status-card {
@@ -816,6 +910,7 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .task-panel,
   .side-panel {
     border-left: 0;
     border-top: 1px solid var(--line);
@@ -833,6 +928,7 @@ textarea {
 @media (max-width: 640px) {
   .top-menu,
   .camera-panel,
+  .task-panel,
   .side-panel {
     padding: 12px;
   }

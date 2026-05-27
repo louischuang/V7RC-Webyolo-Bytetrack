@@ -45,10 +45,10 @@ Next planning target:
 - [x] Add Camera settings modal with Camera/MJPG/RTSP/YouTube source options.
 - [x] Add Gemma settings modal with include-frame, system prompt, and fixed prompt settings.
 - [x] Cache Gemma prompt/settings in browser `localStorage`.
-- [ ] Convert workspace from two columns to three columns.
-- [ ] Reduce camera/video column width while preserving 16:9.
-- [ ] Add a middle card column with the same width as the right control cards.
-- [ ] Move robot task/autopilot cards into the middle column.
+- [x] Convert workspace from two columns to three columns.
+- [x] Reduce camera/video column width while preserving 16:9.
+- [x] Add a middle card column with the same width as the right control cards.
+- [x] Move robot task/autopilot cards into the middle column.
 - [ ] Add a compact robot safety/command-rate metric strip.
 
 ## Phase 2 - Camera And Sources
@@ -293,17 +293,17 @@ Next planning target:
 
 ## Phase 15 - Task Console And Bird's-Eye View
 
-- [ ] Add Robot Task card.
-- [ ] Add mode buttons for `Autopilot` and `Mission`.
-- [ ] Add Start/Stop icon button on the Robot Task card.
-- [ ] Add task status states: idle, running, complete, blocked, unsafe, error.
-- [ ] Add task message display.
+- [x] Add Robot Task card.
+- [x] Add mode buttons for `Autopilot` and `Mission`.
+- [x] Add Start/Stop icon button on the Robot Task card.
+- [x] Add task status states: idle, running, complete, blocked, unsafe, error.
+- [x] Add task message display.
 - [ ] Add command-plan preview for Mission mode.
-- [ ] Add Bird's-Eye View card below Robot Task.
+- [x] Add Bird's-Eye View card below Robot Task.
 - [ ] Implement perspective transform calibration settings.
 - [ ] Render current frame as bird's-eye view.
-- [ ] Project YOLO/ByteTrack detections into bird's-eye view using box bottom-center points.
-- [ ] Draw projected object labels and track IDs on the bird's-eye view.
+- [x] Project YOLO/ByteTrack detections into bird's-eye view using box bottom-center points.
+- [x] Draw projected object labels and track IDs on the bird's-eye view.
 - [ ] Draw current motion vector or steering/throttle cue.
 - [ ] Cache bird's-eye transform settings in browser local storage.
 
