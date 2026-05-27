@@ -1570,14 +1570,6 @@ function drawDetections(
   mirrorPreview: boolean,
 ) {
   if (detections.length === 0) {
-    context.strokeStyle = "rgba(125, 211, 252, 0.4)";
-    context.lineWidth = 1.5;
-    context.strokeRect(16, 16, Math.min(220, stageWidth - 32), Math.min(120, stageHeight - 32));
-    context.fillStyle = "rgba(8, 47, 73, 0.78)";
-    context.fillRect(16, 16, 126, 26);
-    context.fillStyle = "#e0f2fe";
-    context.font = "12px ui-sans-serif, system-ui";
-    context.fillText("overlay ready", 26, 34);
     return;
   }
 
