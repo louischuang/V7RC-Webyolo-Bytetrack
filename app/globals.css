@@ -511,6 +511,10 @@ input {
   accent-color: var(--accent);
 }
 
+.roi-controls button {
+  width: 100%;
+}
+
 .status-card {
   padding: 12px;
 }

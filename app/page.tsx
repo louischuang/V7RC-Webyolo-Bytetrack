@@ -139,6 +139,7 @@ const defaultFixedPrompt =
   "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
+const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
 const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "camera", label: "Camera" },
   { id: "mjpg", label: "MJPG" },
@@ -247,6 +248,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [birdViewSettingsHydrated, setBirdViewSettingsHydrated] = useState(false);
   const [robotMode, setRobotMode] = useState<RobotMode>("suggestion");
   const [robotStatus, setRobotStatus] = useState<V7rcTransportStatus>({
     connected: false,
@@ -351,6 +353,16 @@ export default function Home() {
     return url ? `${sourceMode.toUpperCase()} / ${url}` : `${sourceMode.toUpperCase()} source`;
   }, [devices, selectedCamera, sourceMode, streamUrls]);
 
+  const resetBirdViewSettings = useCallback(() => {
+    setBirdViewHeightScale(birdViewDefaultHeightScale);
+    setRoiBottomWidth(birdViewDefaultBottomWidth);
+    setRoiBottomY(birdViewDefaultBottomY);
+    setRoiConfidence(0);
+    setRoiTopCenterX(birdViewDefaultTopCenterX);
+    setRoiTopWidth(birdViewDefaultTopWidth);
+    setRoiTopY(birdViewDefaultTopY);
+  }, []);
+
   useEffect(() => {
     let cachedSettings: Partial<{
       includeFrame: boolean;
@@ -407,6 +419,66 @@ export default function Home() {
       }),
     );
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
+
+  useEffect(() => {
+    let cachedSettings: Partial<{
+      birdViewHeightScale: number;
+      roiBottomWidth: number;
+      roiBottomY: number;
+      roiTopCenterX: number;
+      roiTopWidth: number;
+      roiTopY: number;
+    }> | null = null;
+
+    try {
+      const cached = window.localStorage.getItem(birdViewSettingsStorageKey);
+      if (cached) {
+        cachedSettings = JSON.parse(cached) as typeof cachedSettings;
+      }
+    } catch {
+      window.localStorage.removeItem(birdViewSettingsStorageKey);
+    } finally {
+      queueMicrotask(() => {
+        if (typeof cachedSettings?.birdViewHeightScale === "number") {
+          setBirdViewHeightScale(clamp(cachedSettings.birdViewHeightScale, 1, 2));
+        }
+        if (typeof cachedSettings?.roiBottomWidth === "number") {
+          setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
+        }
+        if (typeof cachedSettings?.roiBottomY === "number") {
+          setRoiBottomY(clamp(cachedSettings.roiBottomY, 0.78, 0.99));
+        }
+        if (typeof cachedSettings?.roiTopCenterX === "number") {
+          setRoiTopCenterX(clamp(cachedSettings.roiTopCenterX, 0.35, 0.65));
+        }
+        if (typeof cachedSettings?.roiTopWidth === "number") {
+          setRoiTopWidth(clamp(cachedSettings.roiTopWidth, 0.08, 0.42));
+        }
+        if (typeof cachedSettings?.roiTopY === "number") {
+          setRoiTopY(clamp(cachedSettings.roiTopY, 0.58, 0.72));
+        }
+        setBirdViewSettingsHydrated(true);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!birdViewSettingsHydrated) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      birdViewSettingsStorageKey,
+      JSON.stringify({
+        birdViewHeightScale,
+        roiBottomWidth,
+        roiBottomY,
+        roiTopCenterX,
+        roiTopWidth,
+        roiTopY,
+      }),
+    );
+  }, [birdViewHeightScale, birdViewSettingsHydrated, roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY]);
 
   useEffect(() => {
     const manualCalibration = createManualRoadCalibration(roiTopY, roiTopCenterX, roiTopWidth, roiBottomY, roiBottomWidth);
@@ -1491,6 +1563,9 @@ export default function Home() {
                 />
                 <strong>{roiBottomY.toFixed(2)}</strong>
               </label>
+              <button className="secondary-button compact-button" type="button" onClick={resetBirdViewSettings}>
+                Reset Bird View
+              </button>
             </div>
             <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
           </section>
