@@ -16,6 +16,7 @@ Implemented now:
 - `GET /streams/{id}/index.m3u8` and segment paths serve HLS files when `output=hls`.
 - RTSP inputs use ffmpeg with TCP transport.
 - YouTube inputs are resolved with `yt-dlp -g`, then sent to ffmpeg.
+- YouTube inputs use ffmpeg realtime pacing (`-re`) so VOD media is not converted faster than normal playback speed.
 - YouTube resolver settings are configurable with `YTDLP_FORMAT`, `YTDLP_TIMEOUT_MS`, `YTDLP_COOKIES_FILE`, and `YTDLP_USER_AGENT`.
 - The frontend calls the gateway for RTSP and YouTube modes and uses the returned MJPG URL.
 - The frontend polls active gateway session status and displays client/log/error details under the source URL field.

@@ -734,7 +734,10 @@ export default function Home() {
           return;
         }
 
-        const lastLog = session.lastError || session.logs?.at(-1)?.message || "";
+        const lastLog =
+          session.status === "running" || session.status === "ready"
+            ? ""
+            : session.lastError || session.logs?.at(-1)?.message || "";
         setGatewayStatus(session.status === "running" || session.status === "ready" ? "streaming" : "connecting");
         setGatewayDetail(
           lastLog

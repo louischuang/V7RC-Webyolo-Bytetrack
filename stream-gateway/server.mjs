@@ -213,7 +213,7 @@ function parseHttpUrl(value, label) {
 
 function startHls(session) {
   const args = [
-    ...inputArgs(session.resolvedUrl),
+    ...inputArgs(session),
     "-an",
     "-c:v",
     "libx264",
@@ -256,7 +256,7 @@ function streamMjpg(id, response) {
   }
 
   const args = [
-    ...inputArgs(session.resolvedUrl),
+    ...inputArgs(session),
     "-an",
     "-vf",
     "fps=10",
@@ -379,9 +379,18 @@ function maskUrl(value) {
   }
 }
 
-function inputArgs(url) {
+function inputArgs(session) {
+  const url = session.resolvedUrl;
   const parsed = new URL(url);
-  return parsed.protocol === "rtsp:" ? ["-rtsp_transport", "tcp", "-i", url] : ["-i", url];
+  if (parsed.protocol === "rtsp:") {
+    return ["-rtsp_transport", "tcp", "-i", url];
+  }
+
+  if (session.sourceType === "youtube") {
+    return ["-re", "-i", url];
+  }
+
+  return ["-i", url];
 }
 
 function spawnFfmpeg(args) {
