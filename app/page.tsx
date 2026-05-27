@@ -159,6 +159,9 @@ const laneDetectionIntervalMs = 140;
 const birdViewDefaultTopY = 0.65;
 const birdViewDefaultTopWidth = 0.16;
 const birdViewDefaultBottomWidth = 0.9;
+const birdViewDefaultHeightScale = 1.5;
+const birdViewBaseWidth = 320;
+const birdViewBaseHeight = 220;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -254,6 +257,7 @@ export default function Home() {
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
   const [roiTopWidth, setRoiTopWidth] = useState(birdViewDefaultTopWidth);
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
+  const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [roiConfidence, setRoiConfidence] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
@@ -1381,9 +1385,27 @@ export default function Home() {
               <span>{tracksRef.current.length}</span>
             </div>
             <div className="birdview-stage">
-              <canvas ref={birdViewCanvasRef} width={320} height={220} aria-label="Bird's-eye view" />
+              <canvas
+                ref={birdViewCanvasRef}
+                width={birdViewBaseWidth}
+                height={Math.round(birdViewBaseHeight * birdViewHeightScale)}
+                style={{ aspectRatio: `${birdViewBaseWidth} / ${Math.round(birdViewBaseHeight * birdViewHeightScale)}` }}
+                aria-label="Bird's-eye view"
+              />
             </div>
             <div className="roi-controls" aria-label="Bird's-eye ROI controls">
+              <label>
+                <span>View Height</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="2"
+                  step="0.05"
+                  value={birdViewHeightScale}
+                  onChange={(event) => setBirdViewHeightScale(Number(event.target.value))}
+                />
+                <strong>{birdViewHeightScale.toFixed(2)}</strong>
+              </label>
               <label>
                 <span>Top Y</span>
                 <input
