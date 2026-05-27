@@ -442,6 +442,37 @@ input {
   padding: 0;
 }
 
+.camera-source-card {
+  display: grid;
+  gap: 10px;
+}
+
+.camera-source-summary {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.camera-source-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.camera-source-summary strong {
+  font-size: 13px;
+}
+
+.camera-source-summary small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .robot-card {
   display: grid;
   gap: 10px;
@@ -681,6 +712,22 @@ textarea {
 
 .modal-title h2 {
   font-size: 16px;
+}
+
+.settings-source-switch {
+  margin-top: 0;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .modal-actions {

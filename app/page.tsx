@@ -175,6 +175,7 @@ export default function Home() {
   const [lastInferenceMs, setLastInferenceMs] = useState<number | null>(null);
   const [responseCount, setResponseCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [robotMode, setRobotMode] = useState<RobotMode>("suggestion");
   const [robotStatus, setRobotStatus] = useState<V7rcTransportStatus>({
@@ -243,6 +244,22 @@ export default function Home() {
       ? "iPhone camera selected"
       : `${devices.length} camera${devices.length > 1 ? "s" : ""} available`;
   }, [devices, selectedCamera, sourceMode]);
+  const cameraStatus: RuntimeStatus = useMemo(
+    () => ({
+      detail: cameraError || cameraDetail,
+      label: "Camera",
+      state: cameraState === "error" ? "error" : cameraState === "requesting" ? "loading" : cameraState === "streaming" ? "ready" : "idle",
+    }),
+    [cameraDetail, cameraError, cameraState],
+  );
+  const sourceSummary = useMemo(() => {
+    if (sourceMode === "camera") {
+      return selectedCamera ? formatCameraLabel(selectedCamera, devices.indexOf(selectedCamera)) : "Camera source";
+    }
+
+    const url = streamUrls[sourceMode].trim();
+    return url ? `${sourceMode.toUpperCase()} / ${url}` : `${sourceMode.toUpperCase()} source`;
+  }, [devices, selectedCamera, sourceMode, streamUrls]);
 
   useEffect(() => {
     let cachedSettings: Partial<{
@@ -1016,127 +1033,7 @@ export default function Home() {
           <div>
             <h1>V7RC WebYOLO ByteTrack</h1>
             <p>Robot perception loop with camera, detection, tracking, and Gemma4-E2B</p>
-            <div className="source-switch" aria-label="Source">
-              <span>Source</span>
-              {sourceModes.map((mode) => (
-                <button
-                  className={sourceMode === mode.id ? "active" : undefined}
-                  type="button"
-                  key={mode.id}
-                  onClick={() => selectSourceMode(mode.id)}
-                  disabled={cameraState === "requesting"}
-                >
-                  {mode.label}
-                </button>
-              ))}
-            </div>
           </div>
-        </div>
-
-        <div className="control-strip">
-          {sourceMode === "camera" ? (
-            <>
-              <label className="field">
-                <span>Camera</span>
-                <select
-                  value={selectedDeviceId}
-                  onChange={(event) => setSelectedDeviceId(event.target.value)}
-                  disabled={cameraState === "requesting"}
-                >
-                  {devices.length === 0 ? (
-                    <option value="">No camera listed</option>
-                  ) : (
-                    devices.map((device, index) => (
-                      <option key={device.deviceId || index} value={device.deviceId}>
-                        {formatCameraLabel(device, index)}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <small>{cameraDetail}</small>
-              </label>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => void refreshDevices()}
-                disabled={cameraState === "requesting"}
-                title="Refresh cameras"
-              >
-                Refresh
-              </button>
-            </>
-          ) : (
-            <>
-              <label className="field stream-url-field">
-                <span>{sourceMode.toUpperCase()} URL</span>
-                <input
-                  value={streamUrls[sourceMode]}
-                  onChange={(event) => setStreamUrl(sourceMode, event.target.value)}
-                  disabled={cameraState === "requesting"}
-                  placeholder={getSourcePlaceholder(sourceMode)}
-                />
-                <small>{cameraDetail}</small>
-                {sourceMode === "rtsp" || sourceMode === "youtube" ? (
-                  <small className={`gateway-detail ${gatewayStatus}`}>
-                    {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
-                  </small>
-                ) : null}
-              </label>
-              {sourceMode === "youtube" ? (
-                <div className="output-switch" aria-label="YouTube output">
-                  <span>Output</span>
-                  {(["mp4", "hls"] as const).map((output) => (
-                    <button
-                      className={youtubeOutput === output ? "active" : undefined}
-                      disabled={cameraState === "requesting" || cameraState === "streaming"}
-                      key={output}
-                      onClick={() => setYoutubeOutput(output)}
-                      type="button"
-                    >
-                      {output.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {sourceMode === "rtsp" ? (
-                <div className="output-switch" aria-label="RTSP output">
-                  <span>Output</span>
-                  <button className="active" disabled type="button">
-                    HLS
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )}
-
-          <button
-            className="primary-button"
-            type="button"
-            onClick={cameraState === "streaming" ? stopCamera : sourceMode === "camera" ? startCamera : startUrlSource}
-            disabled={cameraState === "requesting"}
-          >
-            {cameraState === "streaming" ? "Stop" : "Start"}
-          </button>
-          {sourceMode === "youtube" ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => void checkYoutubeSource()}
-              disabled={cameraState === "requesting" || gatewayStatus === "connecting"}
-            >
-              Check
-            </button>
-          ) : null}
-          {sourceMode === "camera" ? (
-            <label className="inline-toggle">
-              <input
-                type="checkbox"
-                checked={mirrorPreview}
-                onChange={(event) => setMirrorPreview(event.target.checked)}
-              />
-              <span>Mirror</span>
-            </label>
-          ) : null}
         </div>
 
         <div className="metric-strip">
@@ -1178,6 +1075,45 @@ export default function Home() {
         </div>
 
         <aside className="side-panel">
+          <div className="camera-source-card">
+            <StatusCard
+              status={cameraStatus}
+              action={
+                <div className="status-actions">
+                  <button
+                    className="primary-button compact-button"
+                    type="button"
+                    onClick={cameraState === "streaming" ? stopCamera : sourceMode === "camera" ? startCamera : startUrlSource}
+                    disabled={cameraState === "requesting"}
+                  >
+                    {cameraState === "streaming" ? "Stop" : "Start"}
+                  </button>
+                  <button
+                    className="icon-button compact-icon-button"
+                    type="button"
+                    onClick={() => setCameraSettingsOpen(true)}
+                    title="Camera settings"
+                    aria-label="Camera settings"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
+                      <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
+                    </svg>
+                  </button>
+                </div>
+              }
+            />
+            <div className="camera-source-summary">
+              <span>Source</span>
+              <strong>{sourceMode.toUpperCase()}</strong>
+              <small>{sourceSummary}</small>
+              {sourceMode === "rtsp" || sourceMode === "youtube" ? (
+                <small className={`gateway-detail ${gatewayStatus}`}>
+                  {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
+                </small>
+              ) : null}
+            </div>
+          </div>
           <StatusCard status={yoloStatus} />
           <StatusCard
             status={llmStatus}
@@ -1348,6 +1284,142 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {cameraSettingsOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setCameraSettingsOpen(false)}>
+          <div
+            aria-labelledby="camera-settings-title"
+            className="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-title">
+              <h2 id="camera-settings-title">Camera Settings</h2>
+              <button
+                className="icon-button compact-icon-button"
+                type="button"
+                onClick={() => setCameraSettingsOpen(false)}
+                title="Close camera settings"
+                aria-label="Close camera settings"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="m6 6 12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+            <div className="source-switch settings-source-switch" aria-label="Source">
+              <span>Source</span>
+              {sourceModes.map((mode) => (
+                <button
+                  className={sourceMode === mode.id ? "active" : undefined}
+                  type="button"
+                  key={mode.id}
+                  onClick={() => selectSourceMode(mode.id)}
+                  disabled={cameraState === "requesting"}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            {sourceMode === "camera" ? (
+              <div className="settings-grid">
+                <label className="field">
+                  <span>Camera</span>
+                  <select
+                    value={selectedDeviceId}
+                    onChange={(event) => setSelectedDeviceId(event.target.value)}
+                    disabled={cameraState === "requesting"}
+                  >
+                    {devices.length === 0 ? (
+                      <option value="">No camera listed</option>
+                    ) : (
+                      devices.map((device, index) => (
+                        <option key={device.deviceId || index} value={device.deviceId}>
+                          {formatCameraLabel(device, index)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <small>{cameraDetail}</small>
+                </label>
+                <div className="settings-row">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void refreshDevices()}
+                    disabled={cameraState === "requesting"}
+                  >
+                    Refresh cameras
+                  </button>
+                  <label className="inline-toggle">
+                    <input
+                      type="checkbox"
+                      checked={mirrorPreview}
+                      onChange={(event) => setMirrorPreview(event.target.checked)}
+                    />
+                    <span>Mirror preview</span>
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <div className="settings-grid">
+                <label className="field stream-url-field">
+                  <span>{sourceMode.toUpperCase()} URL</span>
+                  <input
+                    value={streamUrls[sourceMode]}
+                    onChange={(event) => setStreamUrl(sourceMode, event.target.value)}
+                    disabled={cameraState === "requesting"}
+                    placeholder={getSourcePlaceholder(sourceMode)}
+                  />
+                  <small>{cameraDetail}</small>
+                  {sourceMode === "rtsp" || sourceMode === "youtube" ? (
+                    <small className={`gateway-detail ${gatewayStatus}`}>
+                      {gatewayDetail || `Gateway ${runtimeDefaults.streamGatewayUrl}`}
+                    </small>
+                  ) : null}
+                </label>
+                {sourceMode === "youtube" ? (
+                  <div className="settings-row">
+                    <div className="output-switch" aria-label="YouTube output">
+                      <span>Output</span>
+                      {(["mp4", "hls"] as const).map((output) => (
+                        <button
+                          className={youtubeOutput === output ? "active" : undefined}
+                          disabled={cameraState === "requesting" || cameraState === "streaming"}
+                          key={output}
+                          onClick={() => setYoutubeOutput(output)}
+                          type="button"
+                        >
+                          {output.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void checkYoutubeSource()}
+                      disabled={cameraState === "requesting" || gatewayStatus === "connecting"}
+                    >
+                      Check source
+                    </button>
+                  </div>
+                ) : null}
+                {sourceMode === "rtsp" ? (
+                  <div className="settings-row">
+                    <div className="output-switch" aria-label="RTSP output">
+                      <span>Output</span>
+                      <button className="active" disabled type="button">
+                        HLS
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {settingsOpen ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>

@@ -16,12 +16,12 @@
 - [ ] Add status indicators for camera, YOLO, tracker, and LLM.
 - [ ] Add browser model download progress UI.
 - [ ] Add metrics widgets for FPS, YOLO time, and ByteTrack time.
-- [ ] Move camera/source controls from the top menu into a dedicated Camera card above the YOLO11n card in the right panel.
-- [ ] Show the active camera/source name and Start/Stop action directly on the Camera card.
-- [ ] Add a Camera card settings icon that opens a settings panel.
-- [ ] In the Camera settings panel, support source selection for Camera, MJPG, RTSP, and YouTube.
-- [ ] In the Camera settings panel, support detailed per-source settings such as camera device, mirror mode, MJPG URL, RTSP URL, YouTube URL, YouTube output mode, gateway status, refresh devices, and preflight checks.
-- [ ] Keep the top menu focused on global status and metrics after moving camera/source controls into the Camera card.
+- [x] Move camera/source controls from the top menu into a dedicated Camera card above the YOLO11n card in the right panel.
+- [x] Show the active camera/source name and Start/Stop action directly on the Camera card.
+- [x] Add a Camera card settings icon that opens a settings panel.
+- [x] In the Camera settings panel, support source selection for Camera, MJPG, RTSP, and YouTube.
+- [x] In the Camera settings panel, support detailed per-source settings such as camera device, mirror mode, MJPG URL, RTSP URL, YouTube URL, YouTube output mode, gateway status, refresh devices, and preflight checks.
+- [x] Keep the top menu focused on global status and metrics after moving camera/source controls into the Camera card.
 
 ## Phase 2 - Camera
 
