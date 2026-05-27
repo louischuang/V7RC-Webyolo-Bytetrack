@@ -34,7 +34,7 @@ Default browser model URLs:
 ```env
 NEXT_PUBLIC_YOLO_MODEL_URL=/models/yolo/yolo11n.onnx
 NEXT_PUBLIC_LLM_RUNTIME=transformers
-NEXT_PUBLIC_LLM_DEVICE=wasm
+NEXT_PUBLIC_LLM_DEVICE=webgpu
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
 ```
@@ -117,7 +117,7 @@ Docker Compose mounts `./models` into `/app/public/models`, so production can se
 
 ```env
 NEXT_PUBLIC_LLM_RUNTIME=transformers
-NEXT_PUBLIC_LLM_DEVICE=wasm
+NEXT_PUBLIC_LLM_DEVICE=webgpu
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
 ```
@@ -334,7 +334,7 @@ On macOS, iPhone camera support uses Apple's Continuity Camera. Keep the iPhone 
 
 - YOLO inference runs in Chrome with ONNX Runtime Web.
 - ByteTrack runs in Chrome with TypeScript IoU association and stable `T1`, `T2`, ... IDs.
-- Gemma4-E2B runs through browser-local Transformers.js ONNX generation in a Web Worker. The default device is `wasm` so the slow LLM layer does not compete with YOLO for WebGPU; set `NEXT_PUBLIC_LLM_DEVICE=webgpu` only for benchmark or non-safety tests.
+- Gemma4-E2B runs through browser-local Transformers.js ONNX generation in a Web Worker. The current ONNX q4f16 Gemma artifact requires `NEXT_PUBLIC_LLM_DEVICE=webgpu`; WASM may fail with missing quantized operator support such as `GatherBlockQuantized`. Keep YOLO active and protect the vision loop through scheduling, shorter prompts, and lower LLM frequency rather than forcing this artifact onto WASM.
 - When `Include current frame` is enabled, the app captures the active source frame as an image and sends it to Gemma4 together with the YOLO/ByteTrack track summary.
 - Gemma settings live behind the Gemma4-E2B settings button and are cached in browser `localStorage`.
 - The Gemma perception loop is controlled from the Gemma4-E2B card. Current builds are observation-only; the next stage adds suggestion mode, then gated Bluetooth control.

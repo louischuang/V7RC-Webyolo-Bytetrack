@@ -480,12 +480,12 @@ Configurable values:
 
 The user requested `Gemma4:E2B` running directly inside the web page. Hugging Face currently lists Google official repositories for `google/gemma-4-E2B` and the instruction-tuned `google/gemma-4-E2B-it`. The MVP should use a browser runtime such as Transformers.js, WebLLM, MLC WebLLM, or another browser runtime that can run a compatible Gemma4-E2B browser artifact.
 
-Safety priority: YOLO/ByteTrack is the real-time accident and obstacle perception layer. LLM output may be slower, but it must not pause YOLO, steal the detector's WebGPU priority, or freeze the video surface. The default Gemma device should therefore be a background WASM worker unless a benchmark explicitly selects WebGPU for the LLM.
+Safety priority: YOLO/ByteTrack is the real-time accident and obstacle perception layer. LLM output may be slower, but it must not pause YOLO or freeze the video surface. The current Transformers.js ONNX Gemma artifact requires WebGPU because WASM lacks required quantized operators such as `GatherBlockQuantized`; keep the vision loop responsive through scheduling, short prompts, lower LLM frequency, and worker isolation.
 
 Recommended environment variables:
 
 - `NEXT_PUBLIC_LLM_RUNTIME=transformers`
-- `NEXT_PUBLIC_LLM_DEVICE=wasm`
+- `NEXT_PUBLIC_LLM_DEVICE=webgpu`
 - `NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX`
 - `NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx`
 - `NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=160`

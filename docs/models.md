@@ -91,7 +91,7 @@ MVP chat design:
 - Source model ID: `google/gemma-4-E2B-it`
 - Execution target: browser, not a server API
 - Runtime: Transformers.js / ONNX worker
-- Default LLM device: WASM, so YOLO keeps WebGPU priority for safety perception
+- Default LLM device: WebGPU for the current ONNX q4f16 artifact
 - Current artifact: `onnx-community/gemma-4-E2B-it-ONNX`
 - Current scope: text generation with YOLO/ByteTrack track summaries
 
@@ -99,7 +99,7 @@ Default config:
 
 ```env
 NEXT_PUBLIC_LLM_RUNTIME=transformers
-NEXT_PUBLIC_LLM_DEVICE=wasm
+NEXT_PUBLIC_LLM_DEVICE=webgpu
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
 NEXT_PUBLIC_LLM_MAX_NEW_TOKENS=160
@@ -110,7 +110,7 @@ Important deployment note:
 
 The raw Hugging Face safetensors checkpoint is the source model, not necessarily the final browser artifact. For browser deployment, prefer a runtime-specific package such as an MLC/WebLLM or Transformers.js-compatible quantized artifact.
 
-The current integrated runtime uses Transformers.js with the ONNX community artifact `onnx-community/gemma-4-E2B-it-ONNX`. The model loads in a Web Worker. For robot safety, the default LLM device is `wasm`, even though this can make Gemma slower, because YOLO/ByteTrack must remain the real-time accident and obstacle perception path. Set `NEXT_PUBLIC_LLM_DEVICE=webgpu` only when benchmarking LLM speed or testing without safety-critical vision.
+The current integrated runtime uses Transformers.js with the ONNX community artifact `onnx-community/gemma-4-E2B-it-ONNX`. The model loads in a Web Worker. The current ONNX q4f16 Gemma artifact should run with `NEXT_PUBLIC_LLM_DEVICE=webgpu`. WASM can fail because the quantized graph uses operators such as `GatherBlockQuantized` that are not available in the selected browser backend. YOLO/ByteTrack must still remain the real-time accident and obstacle perception path, so use scheduling and lower LLM frequency instead of pausing YOLO.
 
 First load downloads model shards into browser-managed cache storage. For offline production, mirror the q4f16 ONNX artifact under:
 

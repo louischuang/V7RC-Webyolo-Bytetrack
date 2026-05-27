@@ -8,6 +8,7 @@ services:
       NEXT_PUBLIC_YOLO_MODEL_URL: /models/yolo/yolo11n.onnx
       NEXT_PUBLIC_YOLO_LABELS_URL: /models/yolo/coco.names
       NEXT_PUBLIC_LLM_RUNTIME: transformers
+      NEXT_PUBLIC_LLM_DEVICE: webgpu
       NEXT_PUBLIC_LLM_MODEL_ID: gemma-4-E2B-it-ONNX
       NEXT_PUBLIC_LLM_MODEL_URL: /models/gemma4-e2b-it-onnx
       NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3010}

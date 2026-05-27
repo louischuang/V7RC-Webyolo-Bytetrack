@@ -435,7 +435,7 @@ input {
 
 .task-state-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -478,6 +478,37 @@ input {
 
 .birdview-card p {
   padding: 0 12px 12px;
+}
+
+.roi-controls {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.roi-controls label {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+
+.roi-controls span,
+.roi-controls strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.roi-controls strong {
+  color: var(--text);
+  text-align: right;
+}
+
+.roi-controls input[type="range"] {
+  min-height: 26px;
+  padding: 0;
+  accent-color: var(--accent);
 }
 
 .status-card {

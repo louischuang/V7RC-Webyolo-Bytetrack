@@ -66,7 +66,7 @@ async function loadModel(request: Extract<WorkerRequest, { type: "load" }>) {
     progress_callback,
   });
   model = await Gemma4ForConditionalGeneration.from_pretrained(request.modelId, {
-    dtype: request.device === "webgpu" ? "q4f16" : "q4",
+    dtype: "q4f16",
     device: request.device,
     progress_callback,
   });
