@@ -314,6 +314,7 @@ export default function Home() {
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
   const [roiConfidence, setRoiConfidence] = useState(0);
+  const [laneProcessingMs, setLaneProcessingMs] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -355,11 +356,17 @@ export default function Home() {
     if (robotTaskMode === "autopilot") {
       const offset = laneDetectionRef.current?.egoLaneCenterOffset;
       const laneText = typeof offset === "number" ? ` Ego lane offset ${formatSignedNumber(offset)}.` : " Ego lane pending.";
-      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%.${laneText}`;
+      const modeText = [
+        useRobustLaneScoring ? "robust" : "legacy",
+        filterLaneArtifacts ? "artifact-filter" : "no-artifact-filter",
+        filterLaneHeading ? "heading-filter" : "no-heading-filter",
+        inferMissingLane ? "infer-lane" : "no-infer-lane",
+      ].join(" / ");
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
-  }, [laneConfidence, robotTaskMode, roiConfidence]);
+  }, [filterLaneArtifacts, filterLaneHeading, inferMissingLane, laneConfidence, robotTaskMode, roiConfidence, useRobustLaneScoring]);
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -1418,6 +1425,7 @@ export default function Home() {
         const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
         if (source && isSourceReady(source)) {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
+          const laneStart = performance.now();
           const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
             filterArtifacts: filterLaneArtifacts,
             filterHeading: filterLaneHeading,
@@ -1427,11 +1435,13 @@ export default function Home() {
             useRobustScoring: useRobustLaneScoring,
           });
           const nextDetection = smoothLaneDetection(detection, laneDetectionRef.current, roadCalibrationRef.current, laneSmoothing);
+          const laneElapsed = performance.now() - laneStart;
           laneDetectionRef.current = nextDetection;
 
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
             setLaneConfidence(nextDetection.confidence);
+            setLaneProcessingMs(laneElapsed);
             setRoiConfidence(nextDetection.roiConfidence);
           }
         } else {
@@ -1439,6 +1449,7 @@ export default function Home() {
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
             setLaneConfidence(0);
+            setLaneProcessingMs(0);
             setRoiConfidence(0);
           }
         }
@@ -1595,6 +1606,10 @@ export default function Home() {
               <div>
                 <span>Lane Width</span>
                 <strong>{formatLaneWidth(laneDetectionRef.current?.estimatedLaneWidth)}</strong>
+              </div>
+              <div>
+                <span>Lane Time</span>
+                <strong>{formatDuration(laneProcessingMs)}</strong>
               </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
