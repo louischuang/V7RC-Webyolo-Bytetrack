@@ -261,7 +261,7 @@ const laneDetectionDefaultFilterArtifacts = true;
 const laneDetectionDefaultFilterHeading = true;
 const laneDetectionDefaultInferMissingLane = true;
 const laneDetectionDefaultUseRobustScoring = true;
-const laneDetectionDefaultJoinGapY = 0.16;
+const laneDetectionDefaultJoinGapY = 0.28;
 const laneDetectionDefaultMinPixelScore = 18;
 const laneDetectionDefaultSmoothing = 0.62;
 
@@ -740,7 +740,7 @@ export default function Home() {
           setLanePerceptionMode(cachedSettings.lanePerceptionMode);
         }
         if (typeof cachedSettings?.laneJoinGapY === "number") {
-          setLaneJoinGapY(clamp(cachedSettings.laneJoinGapY, 0.04, 0.25));
+          setLaneJoinGapY(clamp(cachedSettings.laneJoinGapY, 0.04, 0.5));
         }
         if (typeof cachedSettings?.laneMinPixelScore === "number") {
           setLaneMinPixelScore(clamp(cachedSettings.laneMinPixelScore, 8, 42));
@@ -2164,7 +2164,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.04"
-                  max="0.25"
+                  max="0.5"
                   step="0.01"
                   value={laneJoinGapY}
                   onChange={(event) => {
@@ -3537,6 +3537,7 @@ async function detectLaneLinesFromSegmentationAdapter(
 
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, segmentationOptions)),
+    segmentationOptions.joinGapY,
   );
   const pathFilterResult = filterOverheadCenterArtifacts(filterLanePathsByHeading(detectedBirdPaths));
   const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
@@ -3603,6 +3604,7 @@ function detectLaneLinesFromSource(
 
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
+    options.joinGapY,
   );
   const headingFilteredBirdPaths = options.filterHeading
     ? filterLanePathsByHeading(detectedBirdPaths)
@@ -3922,7 +3924,7 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
   const rawSegments: NormalizedPoint[][] = [];
   let currentSegment: NormalizedPoint[] = [];
   const maxGapY = options.joinGapY;
-  const maxGapX = 0.09;
+  const maxGapX = clamp(0.08 + options.joinGapY * 0.18, 0.09, 0.16);
 
   for (const point of sorted) {
     const previous = currentSegment.at(-1);
@@ -3936,11 +3938,11 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
     rawSegments.push(currentSegment);
   }
 
-  const bucketSize = 4;
+  const bucketSize = 3;
   const smoothedSegments: NormalizedPoint[][] = [];
 
   for (const segment of rawSegments) {
-    if (segment.length < 6) {
+    if (segment.length < 4) {
       continue;
     }
 
@@ -3977,10 +3979,72 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
   return smoothedSegments;
 }
 
-function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
-  return paths
+function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][], joinGapY = laneDetectionDefaultJoinGapY) {
+  const sortedPaths = paths
     .filter((path) => path.length >= 2)
+    .map((path) => [...path].sort((a, b) => a.y - b.y))
     .sort((a, b) => pathAverageX(a) - pathAverageX(b));
+  const merged: NormalizedPoint[][] = [];
+
+  for (const path of sortedPaths) {
+    const targetIndex = merged.findIndex((candidate) => shouldMergeDashedLanePath(candidate, path, joinGapY));
+    if (targetIndex < 0) {
+      merged.push(path);
+      continue;
+    }
+
+    merged[targetIndex] = smoothMergedLanePath([...merged[targetIndex], ...path]);
+  }
+
+  return merged.sort((a, b) => pathAverageX(a) - pathAverageX(b));
+}
+
+function shouldMergeDashedLanePath(a: NormalizedPoint[], b: NormalizedPoint[], joinGapY: number) {
+  const rangeA = pathYRange(a);
+  const rangeB = pathYRange(b);
+  const verticalGap = Math.max(0, Math.max(rangeA.min, rangeB.min) - Math.min(rangeA.max, rangeB.max));
+  if (verticalGap > joinGapY * 1.8) {
+    return false;
+  }
+
+  const sampleY = clamp01((Math.max(rangeA.min, rangeB.min) + Math.min(rangeA.max, rangeB.max)) / 2);
+  const fallbackY = clamp01((rangeA.max + rangeA.min + rangeB.max + rangeB.min) / 4);
+  const y = Number.isFinite(sampleY) ? sampleY : fallbackY;
+  const xDistance = Math.abs(pathXAtY(a, y) - pathXAtY(b, y));
+  if (xDistance > 0.105) {
+    return false;
+  }
+
+  const headingA = pathXAtY(a, 0.92) - pathXAtY(a, 0.28);
+  const headingB = pathXAtY(b, 0.92) - pathXAtY(b, 0.28);
+  return Math.abs(headingA - headingB) < 0.18;
+}
+
+function smoothMergedLanePath(path: NormalizedPoint[]) {
+  const sorted = [...path].sort((a, b) => a.y - b.y);
+  const bucketCount = Math.max(3, Math.min(18, Math.ceil(sorted.length / 3)));
+  const range = pathYRange(sorted);
+  const points: NormalizedPoint[] = [];
+
+  for (let bucketIndex = 0; bucketIndex < bucketCount; bucketIndex += 1) {
+    const y0 = range.min + ((range.max - range.min) * bucketIndex) / bucketCount;
+    const y1 = range.min + ((range.max - range.min) * (bucketIndex + 1)) / bucketCount;
+    const bucket = sorted.filter((point) => point.y >= y0 && point.y <= y1);
+    if (bucket.length === 0) {
+      continue;
+    }
+
+    const average = bucket.reduce(
+      (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+      { x: 0, y: 0 },
+    );
+    points.push({
+      x: clamp01(average.x / bucket.length),
+      y: clamp01(average.y / bucket.length),
+    });
+  }
+
+  return points.length >= 2 ? points : sorted;
 }
 
 function filterLanePathsByHeading(paths: NormalizedPoint[][]) {
