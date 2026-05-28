@@ -112,6 +112,7 @@ type LaneDetection = {
 type LaneDetectionOptions = {
   joinGapY: number;
   minPixelScore: number;
+  useRobustScoring: boolean;
 };
 type LaneImageStats = {
   adaptiveMinScore: number;
@@ -188,6 +189,7 @@ const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
 const birdViewDefaultShowDebugArtifacts = true;
+const laneDetectionDefaultUseRobustScoring = true;
 const laneDetectionDefaultJoinGapY = 0.16;
 const laneDetectionDefaultMinPixelScore = 18;
 const laneDetectionDefaultSmoothing = 0.62;
@@ -297,6 +299,7 @@ export default function Home() {
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [showLaneDebugArtifacts, setShowLaneDebugArtifacts] = useState(birdViewDefaultShowDebugArtifacts);
+  const [useRobustLaneScoring, setUseRobustLaneScoring] = useState(laneDetectionDefaultUseRobustScoring);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
@@ -388,6 +391,7 @@ export default function Home() {
   const resetBirdViewSettings = useCallback(() => {
     setBirdViewHeightScale(birdViewDefaultHeightScale);
     setShowLaneDebugArtifacts(birdViewDefaultShowDebugArtifacts);
+    setUseRobustLaneScoring(laneDetectionDefaultUseRobustScoring);
     setLaneJoinGapY(laneDetectionDefaultJoinGapY);
     setLaneMinPixelScore(laneDetectionDefaultMinPixelScore);
     setLaneSmoothing(laneDetectionDefaultSmoothing);
@@ -465,6 +469,7 @@ export default function Home() {
       roiBottomWidth: number;
       roiBottomY: number;
       showLaneDebugArtifacts: boolean;
+      useRobustLaneScoring: boolean;
       roiTopCenterX: number;
       roiTopWidth: number;
       roiTopY: number;
@@ -493,6 +498,9 @@ export default function Home() {
         }
         if (typeof cachedSettings?.showLaneDebugArtifacts === "boolean") {
           setShowLaneDebugArtifacts(cachedSettings.showLaneDebugArtifacts);
+        }
+        if (typeof cachedSettings?.useRobustLaneScoring === "boolean") {
+          setUseRobustLaneScoring(cachedSettings.useRobustLaneScoring);
         }
         if (typeof cachedSettings?.roiBottomWidth === "number") {
           setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
@@ -527,6 +535,7 @@ export default function Home() {
         laneMinPixelScore,
         laneSmoothing,
         showLaneDebugArtifacts,
+        useRobustLaneScoring,
         roiBottomWidth,
         roiBottomY,
         roiTopCenterX,
@@ -541,6 +550,7 @@ export default function Home() {
     laneMinPixelScore,
     laneSmoothing,
     showLaneDebugArtifacts,
+    useRobustLaneScoring,
     roiBottomWidth,
     roiBottomY,
     roiTopCenterX,
@@ -1380,6 +1390,7 @@ export default function Home() {
           const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
             joinGapY: laneJoinGapY,
             minPixelScore: laneMinPixelScore,
+            useRobustScoring: useRobustLaneScoring,
           });
           const nextDetection = smoothLaneDetection(detection, laneDetectionRef.current, roadCalibrationRef.current, laneSmoothing);
           laneDetectionRef.current = nextDetection;
@@ -1406,7 +1417,18 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
-  }, [laneJoinGapY, laneMinPixelScore, laneSmoothing, roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
+  }, [
+    laneJoinGapY,
+    laneMinPixelScore,
+    laneSmoothing,
+    roiBottomWidth,
+    roiBottomY,
+    roiTopCenterX,
+    roiTopWidth,
+    roiTopY,
+    sourceSurface,
+    useRobustLaneScoring,
+  ]);
 
   return (
     <main className="app-shell">
@@ -1684,6 +1706,18 @@ export default function Home() {
                   onChange={(event) => setLaneSmoothing(Number(event.target.value))}
                 />
                 <strong>{laneSmoothing.toFixed(2)}</strong>
+              </label>
+              <label className="checkbox-control">
+                <span>Robust Scoring</span>
+                <input
+                  type="checkbox"
+                  checked={useRobustLaneScoring}
+                  onChange={(event) => {
+                    setUseRobustLaneScoring(event.target.checked);
+                    setRoiConfidence(0);
+                  }}
+                />
+                <strong>{useRobustLaneScoring ? "ON" : "OFF"}</strong>
               </label>
               <label className="checkbox-control">
                 <span>Debug Artifacts</span>
@@ -2853,7 +2887,9 @@ function detectLaneLinesFromSource(
 
   context.drawImage(birdFrame, 0, 0);
   const image = context.getImageData(0, 0, width, height);
-  const imageStats = createLaneImageStats(image.data, width, height, options.minPixelScore);
+  const imageStats = options.useRobustScoring
+    ? createLaneImageStats(image.data, width, height, options.minPixelScore)
+    : null;
   const birdPointsByColumn = new Map<number, NormalizedPoint[]>();
   const scanStartY = Math.floor(height * 0.04);
   const scanEndY = Math.floor(height * 0.98);
@@ -2863,7 +2899,7 @@ function detectLaneLinesFromSource(
     for (let column = 0; column < columnCount; column += 1) {
       const startX = Math.floor((column / columnCount) * width);
       const endX = Math.min(width - 1, Math.ceil(((column + 1) / columnCount) * width));
-      const candidate = findLanePixelCandidate(image.data, width, height, y, startX, endX, imageStats);
+      const candidate = findLanePixelCandidate(image.data, width, height, y, startX, endX, options, imageStats);
 
       if (!candidate) {
         continue;
@@ -2898,7 +2934,8 @@ function findLanePixelCandidate(
   y: number,
   startX: number,
   endX: number,
-  stats: LaneImageStats,
+  options: LaneDetectionOptions,
+  stats: LaneImageStats | null,
 ) {
   if (endX <= startX) {
     return null;
@@ -2908,7 +2945,9 @@ function findLanePixelCandidate(
   let bestX = 0;
 
   for (let x = startX; x <= endX; x += 1) {
-    const score = scoreLanePixel(data, width, height, x, y, stats);
+    const score = stats
+      ? scoreLanePixel(data, width, height, x, y, stats)
+      : scoreLegacyLanePixel(data, width, x, y);
 
     if (score > bestScore) {
       bestScore = score;
@@ -2916,7 +2955,8 @@ function findLanePixelCandidate(
     }
   }
 
-  return bestScore > stats.adaptiveMinScore ? { score: bestScore, x: bestX } : null;
+  const minScore = stats ? stats.adaptiveMinScore : options.minPixelScore;
+  return bestScore > minScore ? { score: bestScore, x: bestX } : null;
 }
 
 function createLaneImageStats(
@@ -2981,6 +3021,20 @@ function scoreLanePixel(
   const edgeScore = scoreLaneEdge(data, width, height, x, y, stats);
 
   return Math.max(whiteScore, yellowScore, edgeScore);
+}
+
+function scoreLegacyLanePixel(data: Uint8ClampedArray, width: number, x: number, y: number) {
+  const offset = (y * width + x) * 4;
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  const whiteScore = luminance > 150 && max - min < 95 ? luminance - 145 : 0;
+  const yellowScore = r > 125 && g > 115 && b < 145 ? (r + g) / 2 - b : 0;
+
+  return Math.max(whiteScore, yellowScore);
 }
 
 function scoreLaneEdge(
