@@ -364,6 +364,7 @@ Next planning target:
 - [ ] Record metrics: display FPS, YOLO inference time, lane preprocessing time, lane fitting time, segmentation inference time, memory growth, and missed-lane duration.
 - [x] Display current lane detection processing time for algorithm toggle comparisons.
 - [x] Display rolling average lane time and current missed-lane duration.
+- [x] Track lane drop count and add metric reset control.
 - [ ] Compare quality and latency before choosing whether YOLOP/YOLOPv2 or segmentation becomes part of the production MVP.
 
 ## Phase 17 - Safety Controller

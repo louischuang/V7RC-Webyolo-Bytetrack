@@ -247,6 +247,7 @@ export default function Home() {
   const sourceDeepLinkAppliedRef = useRef(false);
   const laneProcessingSamplesRef = useRef<number[]>([]);
   const laneMissedSinceRef = useRef<number | null>(null);
+  const laneWasUsableRef = useRef(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -318,6 +319,7 @@ export default function Home() {
   const [roiConfidence, setRoiConfidence] = useState(0);
   const [laneProcessingMs, setLaneProcessingMs] = useState(0);
   const [laneAverageMs, setLaneAverageMs] = useState(0);
+  const [laneDropCount, setLaneDropCount] = useState(0);
   const [laneMissedMs, setLaneMissedMs] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
@@ -425,6 +427,16 @@ export default function Home() {
     setRoiTopCenterX(birdViewDefaultTopCenterX);
     setRoiTopWidth(birdViewDefaultTopWidth);
     setRoiTopY(birdViewDefaultTopY);
+  }, []);
+
+  const resetLaneBenchmarkMetrics = useCallback(() => {
+    laneMissedSinceRef.current = null;
+    laneProcessingSamplesRef.current = [];
+    laneWasUsableRef.current = false;
+    setLaneAverageMs(0);
+    setLaneDropCount(0);
+    setLaneMissedMs(0);
+    setLaneProcessingMs(0);
   }, []);
 
   useEffect(() => {
@@ -1445,8 +1457,12 @@ export default function Home() {
           if (laneUsable) {
             laneMissedSinceRef.current = null;
           } else {
+            if (laneWasUsableRef.current) {
+              setLaneDropCount((count) => count + 1);
+            }
             laneMissedSinceRef.current ??= now;
           }
+          laneWasUsableRef.current = laneUsable;
           laneDetectionRef.current = nextDetection;
 
           if (now - lastStateUpdateAt >= 500) {
@@ -1459,6 +1475,10 @@ export default function Home() {
           }
         } else {
           laneDetectionRef.current = null;
+          if (laneWasUsableRef.current) {
+            setLaneDropCount((count) => count + 1);
+          }
+          laneWasUsableRef.current = false;
           laneMissedSinceRef.current ??= now;
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
@@ -1634,6 +1654,10 @@ export default function Home() {
               <div>
                 <span>Missed Lane</span>
                 <strong>{formatDuration(laneMissedMs)}</strong>
+              </div>
+              <div>
+                <span>Lane Drops</span>
+                <strong>{laneDropCount}</strong>
               </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
@@ -1842,6 +1866,9 @@ export default function Home() {
               </label>
               <button className="secondary-button compact-button" type="button" onClick={resetBirdViewSettings}>
                 Reset Bird View
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={resetLaneBenchmarkMetrics}>
+                Reset Metrics
               </button>
             </div>
             <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
