@@ -86,8 +86,16 @@ type LaneBand = {
   sourceLeft: NormalizedPoint[];
   sourceRight: NormalizedPoint[];
 };
+type EgoLaneEstimate = {
+  centerOffset: number;
+  heading: number;
+  index: number;
+};
 type LaneDetection = {
   birdPaths: NormalizedPoint[][];
+  egoLaneCenterOffset: number | null;
+  egoLaneHeading: number | null;
+  egoLaneIndex: number | null;
   laneBands: LaneBand[];
   left: NormalizedPoint[][];
   confidence: number;
@@ -320,7 +328,9 @@ export default function Home() {
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
-      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%.`;
+      const offset = laneDetectionRef.current?.egoLaneCenterOffset;
+      const laneText = typeof offset === "number" ? ` Ego lane offset ${formatSignedNumber(offset)}.` : " Ego lane pending.";
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%.${laneText}`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
@@ -1498,6 +1508,10 @@ export default function Home() {
                 <span>ROI Confidence</span>
                 <strong>{Math.round(roiConfidence * 100)}%</strong>
               </div>
+              <div>
+                <span>Lane Offset</span>
+                <strong>{formatLaneOffset(laneDetectionRef.current?.egoLaneCenterOffset)}</strong>
+              </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
           </section>
@@ -2505,7 +2519,7 @@ function drawBirdViewDetectedLane(
   }
 
   context.save();
-  drawLaneBands(context, laneDetection.laneBands, "bird", (point) =>
+  drawLaneBands(context, laneDetection.laneBands, "bird", laneDetection.egoLaneIndex, (point) =>
     projectBirdPointToBirdView(point, width, destinationRoad),
   );
 
@@ -2639,7 +2653,7 @@ function drawDetectedLaneLines(
   }
 
   context.save();
-  drawLaneBands(context, laneDetection.laneBands, "source", (point) =>
+  drawLaneBands(context, laneDetection.laneBands, "source", laneDetection.egoLaneIndex, (point) =>
     sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
   );
 
@@ -2688,6 +2702,7 @@ function drawLaneBands(
   context: CanvasRenderingContext2D,
   laneBands: LaneBand[],
   space: "bird" | "source",
+  egoLaneIndex: number | null,
   project: (point: NormalizedPoint) => { x: number; y: number },
 ) {
   laneBands.forEach((band, index) => {
@@ -2699,12 +2714,21 @@ function drawLaneBands(
 
     const left = leftPath.map(project);
     const right = rightPath.map(project);
-    const color = index % 2 === 0 ? "rgba(45, 212, 191, 0.18)" : "rgba(59, 130, 246, 0.16)";
+    const isEgoLane = index === egoLaneIndex;
+    const color = isEgoLane
+      ? "rgba(250, 204, 21, 0.24)"
+      : index % 2 === 0
+        ? "rgba(45, 212, 191, 0.18)"
+        : "rgba(59, 130, 246, 0.16)";
 
     context.save();
     context.fillStyle = color;
-    context.strokeStyle = index % 2 === 0 ? "rgba(45, 212, 191, 0.45)" : "rgba(147, 197, 253, 0.42)";
-    context.lineWidth = 1;
+    context.strokeStyle = isEgoLane
+      ? "rgba(250, 204, 21, 0.78)"
+      : index % 2 === 0
+        ? "rgba(45, 212, 191, 0.45)"
+        : "rgba(147, 197, 253, 0.42)";
+    context.lineWidth = isEgoLane ? 2 : 1;
     context.beginPath();
     context.moveTo(left[0].x, left[0].y);
     for (const point of left.slice(1)) {
@@ -2719,9 +2743,9 @@ function drawLaneBands(
 
     const labelAnchor = left[Math.max(0, Math.floor(left.length * 0.72))];
     const labelPair = right[Math.max(0, Math.floor(right.length * 0.72))];
-    context.fillStyle = index % 2 === 0 ? "#99f6e4" : "#bfdbfe";
+    context.fillStyle = isEgoLane ? "#fde68a" : index % 2 === 0 ? "#99f6e4" : "#bfdbfe";
     context.font = "11px ui-sans-serif, system-ui";
-    context.fillText(`lane ${index + 1}`, (labelAnchor.x + labelPair.x) / 2 - 16, (labelAnchor.y + labelPair.y) / 2);
+    context.fillText(`${isEgoLane ? "ego " : ""}lane ${index + 1}`, (labelAnchor.x + labelPair.x) / 2 - 22, (labelAnchor.y + labelPair.y) / 2);
     context.restore();
   });
 }
@@ -2822,10 +2846,14 @@ function createLaneDetectionFromBirdPaths(
 ): LaneDetection {
   const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
   const laneBands = createLaneBands(birdPaths, roadCalibration);
+  const egoLane = estimateEgoLane(laneBands);
 
   return {
     birdPaths,
     confidence,
+    egoLaneCenterOffset: egoLane?.centerOffset ?? null,
+    egoLaneHeading: egoLane?.heading ?? null,
+    egoLaneIndex: egoLane?.index ?? null,
     laneBands,
     left: sourcePaths.filter((path) => pathAverageX(path) < 0.5),
     road: roadCalibration,
@@ -2834,6 +2862,42 @@ function createLaneDetectionFromBirdPaths(
     sourcePaths,
     updatedAt: performance.now(),
   };
+}
+
+function estimateEgoLane(laneBands: LaneBand[]): EgoLaneEstimate | null {
+  let best: (EgoLaneEstimate & { score: number }) | null = null;
+
+  for (let index = 0; index < laneBands.length; index += 1) {
+    const band = laneBands[index];
+    const centerBottom = laneBandCenterAtY(band, 0.92);
+    const centerNear = laneBandCenterAtY(band, 0.68);
+    if (centerBottom === null || centerNear === null) {
+      continue;
+    }
+
+    const centerOffset = centerBottom - 0.5;
+    const heading = centerBottom - centerNear;
+    const score = Math.abs(centerOffset);
+    if (!best || score < best.score) {
+      best = { centerOffset, heading, index, score };
+    }
+  }
+
+  return best && best.score < 0.32
+    ? { centerOffset: best.centerOffset, heading: best.heading, index: best.index }
+    : null;
+}
+
+function laneBandCenterAtY(band: LaneBand, y: number) {
+  const left = pathXAtY(band.birdLeft, y);
+  const right = pathXAtY(band.birdRight, y);
+  const width = right - left;
+
+  if (width < 0.045 || width > 0.55) {
+    return null;
+  }
+
+  return (left + right) / 2;
 }
 
 function smoothLaneDetection(
@@ -3077,6 +3141,9 @@ function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
   return {
     birdPaths: [],
     confidence: 0,
+    egoLaneCenterOffset: null,
+    egoLaneHeading: null,
+    egoLaneIndex: null,
     laneBands: [],
     left: [],
     road: roadCalibration,
@@ -3288,6 +3355,18 @@ function formatDuration(milliseconds: number) {
   }
 
   return `${(milliseconds / 1000).toFixed(2)} s`;
+}
+
+function formatLaneOffset(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return "--";
+  }
+
+  return formatSignedNumber(value);
+}
+
+function formatSignedNumber(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
