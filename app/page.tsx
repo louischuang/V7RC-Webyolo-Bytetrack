@@ -97,12 +97,15 @@ type LaneDetection = {
   egoLaneCenterOffset: number | null;
   egoLaneHeading: number | null;
   egoLaneIndex: number | null;
+  estimatedLaneWidth: number | null;
   laneBands: LaneBand[];
   left: NormalizedPoint[][];
   confidence: number;
+  rejectedArtifactPaths: NormalizedPoint[][];
   roiConfidence: number;
   road: RoadCalibration;
   right: NormalizedPoint[][];
+  sourceRejectedArtifactPaths: NormalizedPoint[][];
   sourcePaths: NormalizedPoint[][];
   updatedAt: number;
 };
@@ -2526,6 +2529,10 @@ function drawBirdViewDetectedLane(
   }
 
   context.save();
+  drawRejectedLaneArtifacts(context, laneDetection.rejectedArtifactPaths, (point) =>
+    projectBirdPointToBirdView(point, width, destinationRoad),
+  );
+
   drawLaneBands(context, laneDetection.laneBands, "bird", laneDetection.egoLaneIndex, (point) =>
     projectBirdPointToBirdView(point, width, destinationRoad),
   );
@@ -2660,6 +2667,10 @@ function drawDetectedLaneLines(
   }
 
   context.save();
+  drawRejectedLaneArtifacts(context, laneDetection.sourceRejectedArtifactPaths, (point) =>
+    sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
+  );
+
   drawLaneBands(context, laneDetection.laneBands, "source", laneDetection.egoLaneIndex, (point) =>
     sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
   );
@@ -2703,6 +2714,34 @@ function drawProjectedLanePath(
   const last = projected[projected.length - 1];
   context.lineTo(last.x, last.y);
   context.stroke();
+}
+
+function drawRejectedLaneArtifacts(
+  context: CanvasRenderingContext2D,
+  paths: NormalizedPoint[][],
+  project: (point: NormalizedPoint) => { x: number; y: number },
+) {
+  if (paths.length === 0) {
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = "rgba(244, 114, 182, 0.78)";
+  context.lineWidth = 2;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.setLineDash([6, 6]);
+
+  for (const path of paths) {
+    drawProjectedLanePath(context, path, project);
+  }
+
+  context.setLineDash([]);
+  context.fillStyle = "rgba(244, 114, 182, 0.9)";
+  context.font = "11px ui-sans-serif, system-ui";
+  const labelPoint = project(paths[0][Math.max(0, Math.floor(paths[0].length * 0.62))]);
+  context.fillText("rejected artifact", labelPoint.x + 6, labelPoint.y);
+  context.restore();
 }
 
 function drawLaneBands(
@@ -2809,15 +2848,16 @@ function detectLaneLinesFromSource(
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
   );
-  const filteredBirdPaths = filterOverheadCenterArtifacts(detectedBirdPaths);
-  const birdPaths = extendBirdLanePaths(filteredBirdPaths);
+  const pathFilterResult = filterOverheadCenterArtifacts(detectedBirdPaths);
+  const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
+  const birdPaths = extendBirdLanePaths(pathFilterResult.accepted);
   const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
   const rowCount = Math.max(1, Math.floor((scanEndY - scanStartY) / 3));
   const confidence = clamp01(
     Math.min(pointCount, rowCount * 2.4) / (rowCount * 2.4),
   );
 
-  return createLaneDetectionFromBirdPaths(birdPaths, roadCalibration, confidence);
+  return createLaneDetectionFromBirdPaths(birdPaths, roadCalibration, confidence, rejectedArtifactPaths);
 }
 
 function findLanePixelCandidate(
@@ -2942,9 +2982,15 @@ function createLaneDetectionFromBirdPaths(
   birdPaths: NormalizedPoint[][],
   roadCalibration: RoadCalibration,
   confidence: number,
+  rejectedArtifactPaths: NormalizedPoint[][] = [],
+  expectedLaneWidth?: number | null,
 ): LaneDetection {
   const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
-  const laneBands = createLaneBands(birdPaths, roadCalibration);
+  const sourceRejectedArtifactPaths = rejectedArtifactPaths.map((path) =>
+    path.map((point) => birdPointToSourcePoint(point, roadCalibration)),
+  );
+  const laneBands = createLaneBands(birdPaths, roadCalibration, expectedLaneWidth);
+  const estimatedLaneWidth = estimateBirdLaneWidth(laneBands, birdPaths, expectedLaneWidth);
   const egoLane = estimateEgoLane(laneBands);
 
   return {
@@ -2953,11 +2999,14 @@ function createLaneDetectionFromBirdPaths(
     egoLaneCenterOffset: egoLane?.centerOffset ?? null,
     egoLaneHeading: egoLane?.heading ?? null,
     egoLaneIndex: egoLane?.index ?? null,
+    estimatedLaneWidth,
     laneBands,
     left: sourcePaths.filter((path) => pathAverageX(path) < 0.5),
+    rejectedArtifactPaths,
     road: roadCalibration,
     right: sourcePaths.filter((path) => pathAverageX(path) >= 0.5),
     roiConfidence: confidence,
+    sourceRejectedArtifactPaths,
     sourcePaths,
     updatedAt: performance.now(),
   };
@@ -3006,7 +3055,13 @@ function smoothLaneDetection(
   smoothing: number,
 ) {
   if (!previous || previous.birdPaths.length === 0 || current.birdPaths.length === 0 || smoothing <= 0) {
-    return createLaneDetectionFromBirdPaths(current.birdPaths, roadCalibration, current.confidence);
+    return createLaneDetectionFromBirdPaths(
+      current.birdPaths,
+      roadCalibration,
+      current.confidence,
+      current.rejectedArtifactPaths,
+      previous?.estimatedLaneWidth,
+    );
   }
 
   const safeSmoothing = clamp(smoothing, 0, 0.9);
@@ -3020,7 +3075,13 @@ function smoothLaneDetection(
   });
   const confidence = current.confidence * (1 - safeSmoothing * 0.25) + previous.confidence * safeSmoothing * 0.25;
 
-  return createLaneDetectionFromBirdPaths(smoothedPaths, roadCalibration, confidence);
+  return createLaneDetectionFromBirdPaths(
+    smoothedPaths,
+    roadCalibration,
+    confidence,
+    current.rejectedArtifactPaths,
+    previous.estimatedLaneWidth,
+  );
 }
 
 function findNearestLanePath(path: NormalizedPoint[], candidates: NormalizedPoint[][]) {
@@ -3130,12 +3191,16 @@ function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
 
 function filterOverheadCenterArtifacts(paths: NormalizedPoint[][]) {
   if (paths.length < 3) {
-    return paths;
+    return { accepted: paths, rejected: [] };
   }
 
-  return paths.filter((path, index) => {
+  const accepted: NormalizedPoint[][] = [];
+  const rejected: NormalizedPoint[][] = [];
+
+  paths.forEach((path, index) => {
     if (!looksLikeOverheadCenterArtifact(path)) {
-      return true;
+      accepted.push(path);
+      return;
     }
 
     const centerBottomX = pathXAtY(path, 0.88);
@@ -3156,8 +3221,14 @@ function filterOverheadCenterArtifacts(paths: NormalizedPoint[][]) {
       return distance > 0.1 && distance < 0.38;
     });
 
-    return !(hasLeftBoundary && hasRightBoundary);
+    if (hasLeftBoundary && hasRightBoundary) {
+      rejected.push(path);
+    } else {
+      accepted.push(path);
+    }
   });
+
+  return { accepted, rejected };
 }
 
 function looksLikeOverheadCenterArtifact(path: NormalizedPoint[]) {
@@ -3215,7 +3286,11 @@ function extrapolatePathXAtY(start: NormalizedPoint, end: NormalizedPoint, y: nu
   return clamp01(start.x + slope * (y - start.y));
 }
 
-function createLaneBands(birdPaths: NormalizedPoint[][], roadCalibration: RoadCalibration): LaneBand[] {
+function createLaneBands(
+  birdPaths: NormalizedPoint[][],
+  roadCalibration: RoadCalibration,
+  expectedLaneWidth?: number | null,
+): LaneBand[] {
   const sortedPaths = mergeNearbyBirdLanePaths(birdPaths);
   const laneBands: LaneBand[] = [];
 
@@ -3261,7 +3336,7 @@ function createLaneBands(birdPaths: NormalizedPoint[][], roadCalibration: RoadCa
     });
   }
 
-  const inferredBands = createInferredLaneBands(sortedPaths, laneBands, roadCalibration);
+  const inferredBands = createInferredLaneBands(sortedPaths, laneBands, roadCalibration, expectedLaneWidth);
   return [...laneBands, ...inferredBands].sort((a, b) => laneBandAverageX(a) - laneBandAverageX(b));
 }
 
@@ -3269,12 +3344,13 @@ function createInferredLaneBands(
   birdPaths: NormalizedPoint[][],
   existingBands: LaneBand[],
   roadCalibration: RoadCalibration,
+  expectedLaneWidth?: number | null,
 ): LaneBand[] {
   if (birdPaths.length === 0 || existingBands.some((band) => Math.abs(laneBandAverageX(band) - 0.5) < 0.24)) {
     return [];
   }
 
-  const expectedLaneWidth = estimateBirdLaneWidth(existingBands);
+  const inferredLaneWidth = estimateBirdLaneWidth(existingBands, birdPaths, expectedLaneWidth);
   const inferredBands: LaneBand[] = [];
 
   for (const boundary of birdPaths) {
@@ -3285,7 +3361,7 @@ function createInferredLaneBands(
 
     const bottomX = pathXAtY(boundary, 0.9);
     const isRightBoundary = bottomX >= 0.5;
-    const shiftedBoundary = shiftBirdLanePath(boundary, isRightBoundary ? -expectedLaneWidth : expectedLaneWidth);
+    const shiftedBoundary = shiftBirdLanePath(boundary, isRightBoundary ? -inferredLaneWidth : inferredLaneWidth);
     const leftBoundary = isRightBoundary ? shiftedBoundary : boundary;
     const rightBoundary = isRightBoundary ? boundary : shiftedBoundary;
     const birdLeft: NormalizedPoint[] = [];
@@ -3332,21 +3408,55 @@ function createInferredLaneBands(
   return inferredBands.slice(0, 2);
 }
 
-function estimateBirdLaneWidth(existingBands: LaneBand[]) {
-  const widths = existingBands
+function estimateBirdLaneWidth(
+  existingBands: LaneBand[],
+  birdPaths: NormalizedPoint[][] = [],
+  fallbackWidth?: number | null,
+) {
+  const bandWidths = existingBands
     .map((band) => {
       const leftX = pathXAtY(band.birdLeft, 0.82);
       const rightX = pathXAtY(band.birdRight, 0.82);
       return rightX - leftX;
     })
-    .filter((width) => width >= 0.1 && width <= 0.4)
-    .sort((a, b) => a - b);
+    .filter(isValidBirdLaneWidth);
 
-  if (widths.length === 0) {
-    return 0.24;
+  const pathWidths = estimateBirdLaneWidthsFromPathSpacing(birdPaths);
+  const widths = [...bandWidths, ...pathWidths].sort((a, b) => a - b);
+
+  if (widths.length > 0) {
+    return clamp(widths[Math.floor(widths.length / 2)], 0.16, 0.32);
   }
 
-  return clamp(widths[Math.floor(widths.length / 2)], 0.16, 0.32);
+  if (typeof fallbackWidth === "number" && isValidBirdLaneWidth(fallbackWidth)) {
+    return clamp(fallbackWidth, 0.16, 0.32);
+  }
+
+  return 0.24;
+}
+
+function estimateBirdLaneWidthsFromPathSpacing(birdPaths: NormalizedPoint[][]) {
+  const bottomXs = birdPaths
+    .filter((path) => {
+      const range = pathYRange(path);
+      return range.max - range.min > 0.24;
+    })
+    .map((path) => pathXAtY(path, 0.86))
+    .sort((a, b) => a - b);
+  const widths: number[] = [];
+
+  for (let index = 1; index < bottomXs.length; index += 1) {
+    const width = bottomXs[index] - bottomXs[index - 1];
+    if (isValidBirdLaneWidth(width)) {
+      widths.push(width);
+    }
+  }
+
+  return widths;
+}
+
+function isValidBirdLaneWidth(width: number) {
+  return width >= 0.1 && width <= 0.4;
 }
 
 function shiftBirdLanePath(path: NormalizedPoint[], offsetX: number) {
@@ -3384,11 +3494,14 @@ function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
     egoLaneCenterOffset: null,
     egoLaneHeading: null,
     egoLaneIndex: null,
+    estimatedLaneWidth: null,
     laneBands: [],
     left: [],
+    rejectedArtifactPaths: [],
     road: roadCalibration,
     right: [],
     roiConfidence: 0,
+    sourceRejectedArtifactPaths: [],
     sourcePaths: [],
     updatedAt: performance.now(),
   };
