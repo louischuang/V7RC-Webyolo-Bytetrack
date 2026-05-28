@@ -245,6 +245,8 @@ export default function Home() {
   const inferenceRoundRef = useRef(0);
   const runInferenceRoundRef = useRef<() => Promise<void>>(async () => {});
   const sourceDeepLinkAppliedRef = useRef(false);
+  const laneProcessingSamplesRef = useRef<number[]>([]);
+  const laneMissedSinceRef = useRef<number | null>(null);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -315,6 +317,8 @@ export default function Home() {
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
   const [roiConfidence, setRoiConfidence] = useState(0);
   const [laneProcessingMs, setLaneProcessingMs] = useState(0);
+  const [laneAverageMs, setLaneAverageMs] = useState(0);
+  const [laneMissedMs, setLaneMissedMs] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -1436,19 +1440,31 @@ export default function Home() {
           });
           const nextDetection = smoothLaneDetection(detection, laneDetectionRef.current, roadCalibrationRef.current, laneSmoothing);
           const laneElapsed = performance.now() - laneStart;
+          const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
+          const laneUsable = isLaneDetectionUsable(nextDetection);
+          if (laneUsable) {
+            laneMissedSinceRef.current = null;
+          } else {
+            laneMissedSinceRef.current ??= now;
+          }
           laneDetectionRef.current = nextDetection;
 
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
             setLaneConfidence(nextDetection.confidence);
+            setLaneAverageMs(nextLaneAverage);
+            setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(laneElapsed);
             setRoiConfidence(nextDetection.roiConfidence);
           }
         } else {
           laneDetectionRef.current = null;
+          laneMissedSinceRef.current ??= now;
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
             setLaneConfidence(0);
+            setLaneAverageMs(0);
+            setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(0);
             setRoiConfidence(0);
           }
@@ -1610,6 +1626,14 @@ export default function Home() {
               <div>
                 <span>Lane Time</span>
                 <strong>{formatDuration(laneProcessingMs)}</strong>
+              </div>
+              <div>
+                <span>Avg Lane</span>
+                <strong>{formatDuration(laneAverageMs)}</strong>
+              </div>
+              <div>
+                <span>Missed Lane</span>
+                <strong>{formatDuration(laneMissedMs)}</strong>
               </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
@@ -3235,6 +3259,10 @@ function laneBandCenterAtY(band: LaneBand, y: number) {
   return (left + right) / 2;
 }
 
+function isLaneDetectionUsable(detection: LaneDetection) {
+  return detection.confidence >= 0.35 && detection.laneBands.length > 0 && detection.egoLaneIndex !== null;
+}
+
 function smoothLaneDetection(
   current: LaneDetection,
   previous: LaneDetection | null,
@@ -3929,6 +3957,15 @@ function formatDuration(milliseconds: number) {
   }
 
   return `${(milliseconds / 1000).toFixed(2)} s`;
+}
+
+function pushRollingSample(samples: number[], value: number, maxSamples: number) {
+  samples.push(value);
+  while (samples.length > maxSamples) {
+    samples.shift();
+  }
+
+  return samples.reduce((total, sample) => total + sample, 0) / Math.max(1, samples.length);
 }
 
 function formatLaneOffset(value: number | null | undefined) {
