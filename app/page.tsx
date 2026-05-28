@@ -187,6 +187,7 @@ const birdViewDefaultBottomWidth = 0.9;
 const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
+const birdViewDefaultShowDebugArtifacts = true;
 const laneDetectionDefaultJoinGapY = 0.16;
 const laneDetectionDefaultMinPixelScore = 18;
 const laneDetectionDefaultSmoothing = 0.62;
@@ -295,6 +296,7 @@ export default function Home() {
   const [roiBottomY, setRoiBottomY] = useState(birdViewDefaultBottomY);
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
+  const [showLaneDebugArtifacts, setShowLaneDebugArtifacts] = useState(birdViewDefaultShowDebugArtifacts);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
@@ -385,6 +387,7 @@ export default function Home() {
 
   const resetBirdViewSettings = useCallback(() => {
     setBirdViewHeightScale(birdViewDefaultHeightScale);
+    setShowLaneDebugArtifacts(birdViewDefaultShowDebugArtifacts);
     setLaneJoinGapY(laneDetectionDefaultJoinGapY);
     setLaneMinPixelScore(laneDetectionDefaultMinPixelScore);
     setLaneSmoothing(laneDetectionDefaultSmoothing);
@@ -461,6 +464,7 @@ export default function Home() {
       laneSmoothing: number;
       roiBottomWidth: number;
       roiBottomY: number;
+      showLaneDebugArtifacts: boolean;
       roiTopCenterX: number;
       roiTopWidth: number;
       roiTopY: number;
@@ -486,6 +490,9 @@ export default function Home() {
         }
         if (typeof cachedSettings?.laneSmoothing === "number") {
           setLaneSmoothing(clamp(cachedSettings.laneSmoothing, 0, 0.9));
+        }
+        if (typeof cachedSettings?.showLaneDebugArtifacts === "boolean") {
+          setShowLaneDebugArtifacts(cachedSettings.showLaneDebugArtifacts);
         }
         if (typeof cachedSettings?.roiBottomWidth === "number") {
           setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
@@ -519,6 +526,7 @@ export default function Home() {
         laneJoinGapY,
         laneMinPixelScore,
         laneSmoothing,
+        showLaneDebugArtifacts,
         roiBottomWidth,
         roiBottomY,
         roiTopCenterX,
@@ -532,6 +540,7 @@ export default function Home() {
     laneJoinGapY,
     laneMinPixelScore,
     laneSmoothing,
+    showLaneDebugArtifacts,
     roiBottomWidth,
     roiBottomY,
     roiTopCenterX,
@@ -1306,6 +1315,7 @@ export default function Home() {
           rect.height,
           mirrorPreview && sourceMode === "camera",
           laneDetectionRef.current,
+          showLaneDebugArtifacts,
         );
         drawDetections(context, tracksRef.current, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
         context.restore();
@@ -1324,7 +1334,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, [mirrorPreview, sourceMode, sourceSurface]);
+  }, [mirrorPreview, showLaneDebugArtifacts, sourceMode, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -1345,6 +1355,7 @@ export default function Home() {
           robotTaskMode,
           robotTaskStatus,
           source && isSourceReady(source) ? source : null,
+          showLaneDebugArtifacts,
         );
       }
 
@@ -1353,7 +1364,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paintBirdView);
     return () => cancelAnimationFrame(animationFrame);
-  }, [robotTaskMode, robotTaskStatus, sourceSurface]);
+  }, [robotTaskMode, robotTaskStatus, showLaneDebugArtifacts, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -1522,6 +1533,10 @@ export default function Home() {
                 <span>Lane Offset</span>
                 <strong>{formatLaneOffset(laneDetectionRef.current?.egoLaneCenterOffset)}</strong>
               </div>
+              <div>
+                <span>Lane Width</span>
+                <strong>{formatLaneWidth(laneDetectionRef.current?.estimatedLaneWidth)}</strong>
+              </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
           </section>
@@ -1669,6 +1684,15 @@ export default function Home() {
                   onChange={(event) => setLaneSmoothing(Number(event.target.value))}
                 />
                 <strong>{laneSmoothing.toFixed(2)}</strong>
+              </label>
+              <label className="checkbox-control">
+                <span>Debug Artifacts</span>
+                <input
+                  type="checkbox"
+                  checked={showLaneDebugArtifacts}
+                  onChange={(event) => setShowLaneDebugArtifacts(event.target.checked)}
+                />
+                <strong>{showLaneDebugArtifacts ? "ON" : "OFF"}</strong>
               </label>
               <button className="secondary-button compact-button" type="button" onClick={resetBirdViewSettings}>
                 Reset Bird View
@@ -2426,6 +2450,7 @@ function drawBirdsEyeView(
   taskMode: RobotTaskMode,
   taskStatus: RobotTaskStatus,
   source: DetectableSource | null,
+  showDebugArtifacts: boolean,
 ) {
   const { width, height } = canvas;
   context.clearRect(0, 0, width, height);
@@ -2479,7 +2504,7 @@ function drawBirdsEyeView(
   context.stroke();
   context.setLineDash([]);
 
-  drawBirdViewDetectedLane(context, width, height, laneDetection, destinationRoad);
+  drawBirdViewDetectedLane(context, width, height, laneDetection, destinationRoad, showDebugArtifacts);
 
   context.fillStyle = taskStatus === "running" ? "#99f6e4" : "#94a3b8";
   context.font = "12px sans-serif";
@@ -2523,15 +2548,18 @@ function drawBirdViewDetectedLane(
   height: number,
   laneDetection: LaneDetection | null,
   destinationRoad: { topWidth: number; bottomWidth: number; topY: number; bottomY: number },
+  showDebugArtifacts: boolean,
 ) {
   if (!laneDetection || laneDetection.confidence <= 0) {
     return;
   }
 
   context.save();
-  drawRejectedLaneArtifacts(context, laneDetection.rejectedArtifactPaths, (point) =>
-    projectBirdPointToBirdView(point, width, destinationRoad),
-  );
+  if (showDebugArtifacts) {
+    drawRejectedLaneArtifacts(context, laneDetection.rejectedArtifactPaths, (point) =>
+      projectBirdPointToBirdView(point, width, destinationRoad),
+    );
+  }
 
   drawLaneBands(context, laneDetection.laneBands, "bird", laneDetection.egoLaneIndex, (point) =>
     projectBirdPointToBirdView(point, width, destinationRoad),
@@ -2661,15 +2689,18 @@ function drawDetectedLaneLines(
   stageHeight: number,
   mirrorPreview: boolean,
   laneDetection: LaneDetection | null,
+  showDebugArtifacts: boolean,
 ) {
   if (!laneDetection || laneDetection.confidence <= 0) {
     return;
   }
 
   context.save();
-  drawRejectedLaneArtifacts(context, laneDetection.sourceRejectedArtifactPaths, (point) =>
-    sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
-  );
+  if (showDebugArtifacts) {
+    drawRejectedLaneArtifacts(context, laneDetection.sourceRejectedArtifactPaths, (point) =>
+      sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
+    );
+  }
 
   drawLaneBands(context, laneDetection.laneBands, "source", laneDetection.egoLaneIndex, (point) =>
     sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
@@ -3716,6 +3747,14 @@ function formatLaneOffset(value: number | null | undefined) {
   }
 
   return formatSignedNumber(value);
+}
+
+function formatLaneWidth(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return "--";
+  }
+
+  return `${Math.round(value * 100)}%`;
 }
 
 function formatSignedNumber(value: number) {
