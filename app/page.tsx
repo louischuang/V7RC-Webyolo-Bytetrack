@@ -83,6 +83,7 @@ type RoadCalibration = {
 type LaneBand = {
   birdLeft: NormalizedPoint[];
   birdRight: NormalizedPoint[];
+  inferred?: boolean;
   sourceLeft: NormalizedPoint[];
   sourceRight: NormalizedPoint[];
 };
@@ -2716,7 +2717,9 @@ function drawLaneBands(
     const right = rightPath.map(project);
     const isEgoLane = index === egoLaneIndex;
     const color = isEgoLane
-      ? "rgba(250, 204, 21, 0.24)"
+      ? band.inferred
+        ? "rgba(251, 146, 60, 0.18)"
+        : "rgba(250, 204, 21, 0.24)"
       : index % 2 === 0
         ? "rgba(45, 212, 191, 0.18)"
         : "rgba(59, 130, 246, 0.16)";
@@ -2724,7 +2727,9 @@ function drawLaneBands(
     context.save();
     context.fillStyle = color;
     context.strokeStyle = isEgoLane
-      ? "rgba(250, 204, 21, 0.78)"
+      ? band.inferred
+        ? "rgba(251, 146, 60, 0.82)"
+        : "rgba(250, 204, 21, 0.78)"
       : index % 2 === 0
         ? "rgba(45, 212, 191, 0.45)"
         : "rgba(147, 197, 253, 0.42)";
@@ -2743,9 +2748,13 @@ function drawLaneBands(
 
     const labelAnchor = left[Math.max(0, Math.floor(left.length * 0.72))];
     const labelPair = right[Math.max(0, Math.floor(right.length * 0.72))];
-    context.fillStyle = isEgoLane ? "#fde68a" : index % 2 === 0 ? "#99f6e4" : "#bfdbfe";
+    context.fillStyle = isEgoLane ? (band.inferred ? "#fed7aa" : "#fde68a") : index % 2 === 0 ? "#99f6e4" : "#bfdbfe";
     context.font = "11px ui-sans-serif, system-ui";
-    context.fillText(`${isEgoLane ? "ego " : ""}lane ${index + 1}`, (labelAnchor.x + labelPair.x) / 2 - 22, (labelAnchor.y + labelPair.y) / 2);
+    context.fillText(
+      `${isEgoLane ? "ego " : ""}${band.inferred ? "inferred " : ""}lane ${index + 1}`,
+      (labelAnchor.x + labelPair.x) / 2 - 36,
+      (labelAnchor.y + labelPair.y) / 2,
+    );
     context.restore();
   });
 }
@@ -3116,7 +3125,102 @@ function createLaneBands(birdPaths: NormalizedPoint[][], roadCalibration: RoadCa
     });
   }
 
-  return laneBands;
+  const inferredBands = createInferredLaneBands(sortedPaths, laneBands, roadCalibration);
+  return [...laneBands, ...inferredBands].sort((a, b) => laneBandAverageX(a) - laneBandAverageX(b));
+}
+
+function createInferredLaneBands(
+  birdPaths: NormalizedPoint[][],
+  existingBands: LaneBand[],
+  roadCalibration: RoadCalibration,
+): LaneBand[] {
+  if (birdPaths.length === 0 || existingBands.some((band) => Math.abs(laneBandAverageX(band) - 0.5) < 0.24)) {
+    return [];
+  }
+
+  const expectedLaneWidth = estimateBirdLaneWidth(existingBands);
+  const inferredBands: LaneBand[] = [];
+
+  for (const boundary of birdPaths) {
+    const range = pathYRange(boundary);
+    if (range.max - range.min < 0.28) {
+      continue;
+    }
+
+    const bottomX = pathXAtY(boundary, 0.9);
+    const isRightBoundary = bottomX >= 0.5;
+    const shiftedBoundary = shiftBirdLanePath(boundary, isRightBoundary ? -expectedLaneWidth : expectedLaneWidth);
+    const leftBoundary = isRightBoundary ? shiftedBoundary : boundary;
+    const rightBoundary = isRightBoundary ? boundary : shiftedBoundary;
+    const birdLeft: NormalizedPoint[] = [];
+    const birdRight: NormalizedPoint[] = [];
+    const sampleCount = 10;
+    const startY = Math.max(range.min, 0.08);
+    const endY = Math.min(range.max, 0.96);
+
+    if (endY - startY < 0.2) {
+      continue;
+    }
+
+    for (let sample = 0; sample < sampleCount; sample += 1) {
+      const y = startY + ((endY - startY) * sample) / (sampleCount - 1);
+      const leftX = pathXAtY(leftBoundary, y);
+      const rightX = pathXAtY(rightBoundary, y);
+      const laneWidth = rightX - leftX;
+
+      if (laneWidth < 0.08 || laneWidth > 0.42) {
+        continue;
+      }
+
+      birdLeft.push({ x: leftX, y });
+      birdRight.push({ x: rightX, y });
+    }
+
+    if (birdLeft.length < 6 || birdRight.length < 6) {
+      continue;
+    }
+
+    const candidateBand: LaneBand = {
+      birdLeft,
+      birdRight,
+      inferred: true,
+      sourceLeft: birdLeft.map((point) => birdPointToSourcePoint(point, roadCalibration)),
+      sourceRight: birdRight.map((point) => birdPointToSourcePoint(point, roadCalibration)),
+    };
+
+    if (Math.abs(laneBandAverageX(candidateBand) - 0.5) < 0.28) {
+      inferredBands.push(candidateBand);
+    }
+  }
+
+  return inferredBands.slice(0, 2);
+}
+
+function estimateBirdLaneWidth(existingBands: LaneBand[]) {
+  const widths = existingBands
+    .map((band) => {
+      const leftX = pathXAtY(band.birdLeft, 0.82);
+      const rightX = pathXAtY(band.birdRight, 0.82);
+      return rightX - leftX;
+    })
+    .filter((width) => width >= 0.1 && width <= 0.4)
+    .sort((a, b) => a - b);
+
+  if (widths.length === 0) {
+    return 0.24;
+  }
+
+  return clamp(widths[Math.floor(widths.length / 2)], 0.16, 0.32);
+}
+
+function shiftBirdLanePath(path: NormalizedPoint[], offsetX: number) {
+  return path.map((point) => ({ x: clamp01(point.x + offsetX), y: point.y }));
+}
+
+function laneBandAverageX(band: LaneBand) {
+  const left = pathAverageX(band.birdLeft);
+  const right = pathAverageX(band.birdRight);
+  return (left + right) / 2;
 }
 
 function birdPointToSourcePoint(point: NormalizedPoint, roadCalibration: RoadCalibration): NormalizedPoint {
