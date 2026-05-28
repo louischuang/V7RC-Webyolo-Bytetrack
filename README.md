@@ -161,6 +161,44 @@ The current app is still observation-first: camera/stream frames go through YOLO
 Vision source -> YOLO/ByteTrack -> Gemma4-E2B action JSON -> safety controller -> V7RC channel frame -> Web Bluetooth robot link
 ```
 
+## Lane Robustness Technical Evaluation
+
+Bad weather, dusk, tunnels, shadows, glare, and worn lane markings can make plain white/yellow thresholding unstable. The lane-following roadmap should be evaluated as a layered browser pipeline instead of a single detector.
+
+### Layer 1: Classical Image Enhancement
+
+Run before lane candidate extraction:
+
+- CLAHE/local contrast enhancement for dusk, tunnel, and low-contrast scenes.
+- Automatic gamma correction to recover dark road texture without overexposing bright lane paint.
+- HSV/HLS white/yellow masks instead of RGB-only brightness checks.
+- Sobel gradient and Canny edge evidence for faded lane boundaries.
+- Morphological close/dilate to connect broken lane markings before path fitting.
+- Evidence debug overlay in Bird's-Eye View: color mask, edge mask, temporal mask, and final lane.
+
+### Layer 2: Geometry And Temporal Fallback
+
+Use when frame-by-frame lane evidence is incomplete:
+
+- Smooth lane paths across frames with EMA or a lightweight Kalman-style model.
+- Continue a recent valid ego lane for a short timeout when current confidence drops.
+- Infer a missing lane boundary from one detected side plus expected lane width.
+- Track vanishing point / heading consistency to reject wall lines, tunnel lights, and dashboard overlays.
+- Use bird-view ROI and lane-width constraints before converting a candidate into a command.
+- Label fallback output as `predicted lane` or `inferred lane` so testing can separate detection from estimation.
+
+### Layer 3: Switchable Neural Segmentation
+
+Keep YOLO11n object detection as the current safety/object baseline, then evaluate alternate road/lane perception modules behind a model switch:
+
+| Mode | Purpose | Notes |
+| --- | --- | --- |
+| `YOLO11n + classical lane` | Current baseline | Fastest path; object detection remains independent. |
+| `YOLOP / YOLOPv2 style` | Joint object, drivable area, and lane line perception | Evaluate browser ONNX compatibility, FPS, memory, and output decoding complexity. |
+| `ONNX road/lane segmentation` | Dedicated road mask or lane mask fallback | Useful when lane markings are weak but road region is visible. |
+
+The technical evaluation should measure FPS, YOLO time, lane processing time, total UI responsiveness, memory growth, and correctness on clear highway, tunnel, dusk, rainy/low-contrast, and worn-lane clips.
+
 ## Next MVP: Task And Autopilot Console
 
 The next UI milestone changes the main workspace from two columns into three columns:

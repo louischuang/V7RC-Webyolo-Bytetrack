@@ -38,6 +38,10 @@ The next MVP iteration turns the current perception console into a robot task co
 - Robot task mode card with `Autopilot` and `Mission` mode buttons plus Start/Stop icon.
 - Bird's-eye view card for autonomous driving visualization.
 - OpenCV.js lane detection for deterministic lane-following in Autopilot mode.
+- Lane robustness technical evaluation for dusk, rain, tunnels, glare, shadows, and worn lane markings.
+- Layer 1 lane enhancement: CLAHE/gamma, HSV/HLS masks, Sobel/Canny evidence, and morphology.
+- Layer 2 lane fallback: temporal smoothing, predicted ego lane, inferred missing boundary, lane-width and heading constraints.
+- Switchable Layer 3 perception model evaluation: current YOLO11n plus classical lane, YOLOP/YOLOPv2-style multitask model, and dedicated ONNX road/lane segmentation.
 - YOLO object projection into the bird's-eye view.
 - LLM mission payload schema for short adjustable-duration action plans.
 - Browser controller that expands mission actions into repeated 30ms V7RC `SRT` frames.
@@ -59,7 +63,7 @@ The next MVP iteration turns the current perception console into a robot task co
 - Unbounded autonomous motion without command rate limits, neutral timeout, and emergency stop.
 - Full manipulation planning or inverse kinematics for the arm.
 - SLAM, mapping, or persistent world modeling.
-- Full road-scene semantic segmentation.
+- Production-grade road-scene semantic segmentation. MVP only evaluates switchable segmentation candidates and does not rely on them as the sole safety layer.
 - GPS navigation or outdoor route planning.
 - Long-horizon LLM motion plans that bypass local safety checks.
 
@@ -74,6 +78,7 @@ Chrome
   ├─ YOLO ONNX inference: ONNX Runtime Web
   ├─ ByteTrack tracker: TypeScript
   ├─ OpenCV.js lane detection: Web Worker / WASM
+  ├─ Lane robustness layers: enhancement + temporal/geometric fallback + optional segmentation model
   ├─ Bird's-eye view renderer: perspective transform + projected tracks
   ├─ Gemma4-E2B inference: WebGPU browser runtime
   ├─ Task mode: Autopilot / Mission
@@ -179,6 +184,45 @@ Lane detection pipeline:
 7. Estimate lane center and heading.
 8. Render lane overlay on both the camera view and bird's-eye view.
 9. Produce a steering suggestion for the safety controller.
+
+### Lane Robustness Evaluation
+
+The lane detector must be evaluated on clear highway, tunnel, dusk, rain/low contrast, glare, and worn-lane clips. The first implementation should keep the current YOLO11n object detector independent, then add stronger lane perception in layers.
+
+Layer 1: classical preprocessing and evidence fusion.
+
+- CLAHE/local contrast enhancement.
+- Automatic gamma correction.
+- HSV/HLS masks for white and yellow lane paint.
+- Sobel gradient and Canny edge masks.
+- Morphological close/dilate to connect broken markings.
+- Debug display for raw bird view, color mask, edge mask, temporal mask, and final lane.
+
+Layer 2: geometry and temporal fallback.
+
+- Smooth lane path estimates across frames.
+- Keep a predicted ego lane briefly when current confidence drops.
+- Infer a missing left or right boundary from one detected side and expected lane width.
+- Apply lane-width, heading, ROI, and vanishing-point consistency checks.
+- Mark fallback lanes as `predicted lane` or `inferred lane`.
+
+Layer 3: switchable model evaluation.
+
+| Perception mode | Goal | MVP evaluation criteria |
+| --- | --- | --- |
+| `YOLO11n + classical lane` | Current baseline plus stronger classical lane logic | Lowest latency, easiest debugging, object detection remains stable. |
+| `YOLOP / YOLOPv2 style` | Joint objects, drivable area, and lane lines | Compare browser ONNX support, FPS, memory, and output quality. |
+| `ONNX road/lane segmentation` | Dedicated drivable-area or lane mask fallback | Compare weak-lane robustness and mask-to-lane conversion cost. |
+
+Benchmark metrics:
+
+- Display FPS and dropped frames.
+- YOLO inference time.
+- Lane preprocessing time.
+- Lane fitting/fallback time.
+- Optional segmentation model inference time.
+- Total browser memory growth over long clips.
+- Ego lane continuity, false positives, and missed lane intervals.
 
 Initial Autopilot rule:
 

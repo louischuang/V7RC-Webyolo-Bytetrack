@@ -21,6 +21,9 @@ Next planning target:
 - Convert the workspace to a three-column robot task console.
 - Add `Autopilot` and `Mission` task modes.
 - Add OpenCV.js lane detection and bird's-eye view visualization.
+- Add lane robustness evaluation for bad weather, dusk, tunnels, glare, and worn lane markings.
+- Implement Layer 1 classical lane enhancement and Layer 2 geometry/temporal fallback before relying on new neural models.
+- Add a switchable Layer 3 perception benchmark: current YOLO11n + classical lane, YOLOP/YOLOPv2-style multitask model, and ONNX road/lane segmentation.
 - Add LLM JSON action plans that are expanded into 30ms V7RC `SRT` frames.
 
 ## Phase 0 - Project Bootstrap
@@ -317,17 +320,43 @@ Next planning target:
 - [x] Add first-pass lane candidate detector using low-resolution Canvas color/brightness thresholding.
 - [x] Draw lane candidates on the Camera overlay.
 - [x] Draw lane candidates on the Bird's-Eye View.
+- [x] Add Canvas-based adaptive luminance/gamma compensation before lane candidate scoring.
+- [x] Add Canvas-based white/yellow/edge evidence fusion for weak lane markings.
+- [ ] Add Layer 1 CLAHE/local contrast enhancement for low-light, tunnel, dusk, and rainy clips.
+- [ ] Add automatic gamma correction before lane thresholding.
+- [ ] Add HSV/HLS white/yellow lane masks and compare against current RGB brightness scoring.
+- [ ] Add Sobel gradient evidence for faded lane boundaries.
 - [ ] Add OpenCV.js lane color and/or grayscale thresholding.
 - [ ] Add blur + Canny edge detection.
+- [ ] Add morphology close/dilate to connect broken lane markings before path fitting.
+- [ ] Add debug toggles for raw bird view, color mask, edge mask, temporal evidence, and final lane overlay.
 - [ ] Add HoughLinesP or contour/sliding-window lane extraction.
 - [ ] Estimate lane center and heading.
 - [ ] Draw lane overlay on the camera view.
 - [ ] Draw lane overlay on the bird's-eye view.
+- [ ] Add Layer 2 predicted lane fallback when current lane confidence drops briefly.
+- [x] Infer ego lane from a single strong lane boundary when the opposite boundary is missing.
+- [ ] Add expected lane-width calibration from recent stable lane bands.
+- [ ] Add vanishing-point or heading consistency checks to reject wall edges, tunnel lights, and dashboard/map overlays.
+- [ ] Label fallback overlays as `inferred lane` or `predicted lane`.
 - [ ] Generate proportional steering from lane center offset.
 - [ ] In clear-lane conditions, command 50% forward throttle.
 - [ ] Stop/neutral when lane detection is missing, stale, or low confidence.
 - [ ] Ensure YOLO/ByteTrack obstacle rules override lane-follow output.
 - [ ] Add OpenCV heap cleanup discipline for all `cv.Mat` allocations.
+
+## Phase 16A - Lane Perception Model Benchmark
+
+- [ ] Add a lane perception mode selector: `YOLO11n + classical lane`, `YOLOP/YOLOPv2`, and `ONNX segmentation`.
+- [ ] Keep YOLO11n object detection as the baseline safety detector while evaluating alternate road/lane perception models.
+- [ ] Research browser-compatible YOLOP/YOLOPv2-style ONNX artifacts and document input/output tensor shapes.
+- [ ] Add adapter interface for multitask outputs: detections, drivable-area mask, and lane-line mask.
+- [ ] Research lightweight ONNX road/lane segmentation candidates suitable for Chrome WebGPU/WASM.
+- [ ] Add adapter interface for segmentation mask to bird-view lane center conversion.
+- [ ] Add model config fields for lane model URL, input size, runtime provider, threshold, and frame interval.
+- [ ] Add benchmark clips/presets for clear highway, tunnel, dusk, rainy/low-contrast, glare, and worn-lane scenes.
+- [ ] Record metrics: display FPS, YOLO inference time, lane preprocessing time, lane fitting time, segmentation inference time, memory growth, and missed-lane duration.
+- [ ] Compare quality and latency before choosing whether YOLOP/YOLOPv2 or segmentation becomes part of the production MVP.
 
 ## Phase 17 - Safety Controller
 

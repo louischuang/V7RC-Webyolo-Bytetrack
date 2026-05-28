@@ -110,6 +110,12 @@ type LaneDetectionOptions = {
   joinGapY: number;
   minPixelScore: number;
 };
+type LaneImageStats = {
+  adaptiveMinScore: number;
+  averageLuminance: number;
+  contrastBoost: number;
+  gammaGain: number;
+};
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
 const defaultLlmDevice: LlmDevice = process.env.NEXT_PUBLIC_LLM_DEVICE === "wasm" ? "wasm" : "webgpu";
@@ -2777,6 +2783,7 @@ function detectLaneLinesFromSource(
 
   context.drawImage(birdFrame, 0, 0);
   const image = context.getImageData(0, 0, width, height);
+  const imageStats = createLaneImageStats(image.data, width, height, options.minPixelScore);
   const birdPointsByColumn = new Map<number, NormalizedPoint[]>();
   const scanStartY = Math.floor(height * 0.04);
   const scanEndY = Math.floor(height * 0.98);
@@ -2786,7 +2793,7 @@ function detectLaneLinesFromSource(
     for (let column = 0; column < columnCount; column += 1) {
       const startX = Math.floor((column / columnCount) * width);
       const endX = Math.min(width - 1, Math.ceil(((column + 1) / columnCount) * width));
-      const candidate = findLanePixelCandidate(image.data, width, y, startX, endX, options.minPixelScore);
+      const candidate = findLanePixelCandidate(image.data, width, height, y, startX, endX, imageStats);
 
       if (!candidate) {
         continue;
@@ -2815,10 +2822,11 @@ function detectLaneLinesFromSource(
 function findLanePixelCandidate(
   data: Uint8ClampedArray,
   width: number,
+  height: number,
   y: number,
   startX: number,
   endX: number,
-  minPixelScore: number,
+  stats: LaneImageStats,
 ) {
   if (endX <= startX) {
     return null;
@@ -2828,16 +2836,7 @@ function findLanePixelCandidate(
   let bestX = 0;
 
   for (let x = startX; x <= endX; x += 1) {
-    const offset = (y * width + x) * 4;
-    const r = data[offset];
-    const g = data[offset + 1];
-    const b = data[offset + 2];
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-    const whiteScore = luminance > 150 && max - min < 95 ? luminance - 145 : 0;
-    const yellowScore = r > 125 && g > 115 && b < 145 ? (r + g) / 2 - b : 0;
-    const score = Math.max(whiteScore, yellowScore);
+    const score = scoreLanePixel(data, width, height, x, y, stats);
 
     if (score > bestScore) {
       bestScore = score;
@@ -2845,7 +2844,97 @@ function findLanePixelCandidate(
     }
   }
 
-  return bestScore > minPixelScore ? { score: bestScore, x: bestX } : null;
+  return bestScore > stats.adaptiveMinScore ? { score: bestScore, x: bestX } : null;
+}
+
+function createLaneImageStats(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  minPixelScore: number,
+): LaneImageStats {
+  let count = 0;
+  let total = 0;
+  let totalSquared = 0;
+
+  for (let y = 0; y < height; y += 4) {
+    for (let x = 0; x < width; x += 4) {
+      const luminance = pixelLuminance(data, width, x, y);
+      total += luminance;
+      totalSquared += luminance * luminance;
+      count += 1;
+    }
+  }
+
+  const averageLuminance = count > 0 ? total / count : 128;
+  const variance = count > 0 ? Math.max(0, totalSquared / count - averageLuminance * averageLuminance) : 0;
+  const contrast = Math.sqrt(variance);
+  const gammaGain = clamp(132 / Math.max(48, averageLuminance), 0.72, 1.52);
+  const contrastBoost = clamp(38 / Math.max(16, contrast), 0.8, 1.7);
+  const adaptiveMinScore = clamp(
+    minPixelScore * (averageLuminance < 92 ? 0.72 : 1) * (contrast < 28 ? 0.82 : 1),
+    9,
+    minPixelScore,
+  );
+
+  return {
+    adaptiveMinScore,
+    averageLuminance,
+    contrastBoost,
+    gammaGain,
+  };
+}
+
+function scoreLanePixel(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  stats: LaneImageStats,
+) {
+  const offset = (y * width + x) * 4;
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const saturation = max <= 0 ? 0 : (max - min) / max;
+  const luminance = pixelLuminance(data, width, x, y);
+  const adjustedLuminance = clamp(luminance * stats.gammaGain, 0, 255);
+  const contrastLift = Math.max(0, adjustedLuminance - stats.averageLuminance) * stats.contrastBoost;
+  const whiteScore = adjustedLuminance > 118 && saturation < 0.42 ? contrastLift + adjustedLuminance - 108 : 0;
+  const yellowDominance = Math.min(r, g) - b;
+  const yellowScore = r > 105 && g > 95 && yellowDominance > 18 ? yellowDominance + contrastLift * 0.6 : 0;
+  const edgeScore = scoreLaneEdge(data, width, height, x, y, stats);
+
+  return Math.max(whiteScore, yellowScore, edgeScore);
+}
+
+function scoreLaneEdge(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  stats: LaneImageStats,
+) {
+  if (x <= 0 || y <= 0 || x >= width - 1 || y >= height - 1) {
+    return 0;
+  }
+
+  const center = pixelLuminance(data, width, x, y);
+  const horizontalGradient = Math.abs(pixelLuminance(data, width, x + 1, y) - pixelLuminance(data, width, x - 1, y));
+  const verticalGradient = Math.abs(pixelLuminance(data, width, x, y + 1) - pixelLuminance(data, width, x, y - 1));
+  const gradient = horizontalGradient * 0.72 + verticalGradient * 0.28;
+  const localBright = center > stats.averageLuminance + 10 || center * stats.gammaGain > 118;
+
+  return gradient > 24 && localBright ? gradient * 0.9 : 0;
+}
+
+function pixelLuminance(data: Uint8ClampedArray, width: number, x: number, y: number) {
+  const offset = (y * width + x) * 4;
+  return 0.299 * data[offset] + 0.587 * data[offset + 1] + 0.114 * data[offset + 2];
 }
 
 function createLaneDetectionFromBirdPaths(
