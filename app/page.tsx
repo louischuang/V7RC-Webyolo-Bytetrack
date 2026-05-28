@@ -2809,7 +2809,8 @@ function detectLaneLinesFromSource(
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
   );
-  const birdPaths = extendBirdLanePaths(detectedBirdPaths);
+  const filteredBirdPaths = filterOverheadCenterArtifacts(detectedBirdPaths);
+  const birdPaths = extendBirdLanePaths(filteredBirdPaths);
   const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
   const rowCount = Math.max(1, Math.floor((scanEndY - scanStartY) / 3));
   const confidence = clamp01(
@@ -3125,6 +3126,52 @@ function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
   return paths
     .filter((path) => path.length >= 2)
     .sort((a, b) => pathAverageX(a) - pathAverageX(b));
+}
+
+function filterOverheadCenterArtifacts(paths: NormalizedPoint[][]) {
+  if (paths.length < 3) {
+    return paths;
+  }
+
+  return paths.filter((path, index) => {
+    if (!looksLikeOverheadCenterArtifact(path)) {
+      return true;
+    }
+
+    const centerBottomX = pathXAtY(path, 0.88);
+    const hasLeftBoundary = paths.some((candidate, candidateIndex) => {
+      if (candidateIndex === index) {
+        return false;
+      }
+      const x = pathXAtY(candidate, 0.88);
+      const distance = centerBottomX - x;
+      return distance > 0.1 && distance < 0.38;
+    });
+    const hasRightBoundary = paths.some((candidate, candidateIndex) => {
+      if (candidateIndex === index) {
+        return false;
+      }
+      const x = pathXAtY(candidate, 0.88);
+      const distance = x - centerBottomX;
+      return distance > 0.1 && distance < 0.38;
+    });
+
+    return !(hasLeftBoundary && hasRightBoundary);
+  });
+}
+
+function looksLikeOverheadCenterArtifact(path: NormalizedPoint[]) {
+  const range = pathYRange(path);
+  const averageX = pathAverageX(path);
+  const topX = pathXAtY(path, 0.18);
+  const bottomX = pathXAtY(path, 0.9);
+  const xValues = path.map((point) => point.x);
+  const xRange = Math.max(...xValues) - Math.min(...xValues);
+  const isCentered = averageX > 0.42 && averageX < 0.58;
+  const isLong = range.max - range.min > 0.52;
+  const isAlmostVertical = Math.abs(bottomX - topX) < 0.065 && xRange < 0.08;
+
+  return isCentered && isLong && isAlmostVertical;
 }
 
 function extendBirdLanePaths(paths: NormalizedPoint[][]) {

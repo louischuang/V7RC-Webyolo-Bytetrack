@@ -337,6 +337,7 @@ Next planning target:
 - [ ] Add Layer 2 predicted lane fallback when current lane confidence drops briefly.
 - [x] Infer ego lane from a single strong lane boundary when the opposite boundary is missing.
 - [ ] Add expected lane-width calibration from recent stable lane bands.
+- [x] Add center vertical artifact filtering to reject tunnel overhead lights before lane-band creation.
 - [ ] Add vanishing-point or heading consistency checks to reject wall edges, tunnel lights, and dashboard/map overlays.
 - [ ] Label fallback overlays as `inferred lane` or `predicted lane`.
 - [ ] Generate proportional steering from lane center offset.
