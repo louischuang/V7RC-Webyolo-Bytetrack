@@ -21,6 +21,7 @@ import {
   type V7rcTransportStatus,
 } from "./lib/v7rc-transport";
 import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo";
+import { LaneSegmentationModel } from "./lib/lane-segmentation";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
 type SourceMode = "camera" | "mjpg" | "rtsp" | "youtube";
@@ -127,6 +128,7 @@ type LaneImageStats = {
 };
 type LanePerceptionResult = {
   detection: LaneDetection;
+  modelUsed: boolean;
   segmentationMs: number;
 };
 type LaneBenchmarkSnapshot = {
@@ -140,6 +142,7 @@ type LaneBenchmarkSnapshot = {
     debugArtifacts: boolean;
     headingFilter: boolean;
     inferMissingLane: boolean;
+    laneModelUsed: boolean;
     lanePerceptionMode: LanePerceptionMode;
     robustScoring: boolean;
   };
@@ -307,6 +310,8 @@ export default function Home() {
   const sourceDeepLinkAppliedRef = useRef(false);
   const laneProcessingSamplesRef = useRef<number[]>([]);
   const laneSegmentationSamplesRef = useRef<number[]>([]);
+  const laneDetectingRef = useRef(false);
+  const laneSegmentationModelRef = useRef<LaneSegmentationModel | null>(null);
   const laneMissedSinceRef = useRef<number | null>(null);
   const laneWasUsableRef = useRef(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -383,6 +388,12 @@ export default function Home() {
   const [laneAverageMs, setLaneAverageMs] = useState(0);
   const [laneSegmentationMs, setLaneSegmentationMs] = useState(0);
   const [laneSegmentationAverageMs, setLaneSegmentationAverageMs] = useState(0);
+  const [laneModelStatus, setLaneModelStatus] = useState<RuntimeStatus>({
+    detail: runtimeDefaults.laneModelUrl ? `Loading ${runtimeDefaults.laneModelUrl}` : "Adapter fallback; no ONNX lane model configured.",
+    label: "Lane Model",
+    state: runtimeDefaults.laneModelUrl ? "loading" : "idle",
+  });
+  const [laneModelUsed, setLaneModelUsed] = useState(false);
   const [laneDropCount, setLaneDropCount] = useState(0);
   const [laneMissedMs, setLaneMissedMs] = useState(0);
   const [laneBenchmarkHistory, setLaneBenchmarkHistory] = useState<LaneBenchmarkSnapshot[]>([]);
@@ -532,6 +543,7 @@ export default function Home() {
         headingFilter: filterLaneHeading,
         inferMissingLane,
         lanePerceptionMode,
+        laneModelUsed,
         robustScoring: useRobustLaneScoring,
       },
       controls: {
@@ -575,6 +587,7 @@ export default function Home() {
     laneJoinGapY,
     laneMinPixelScore,
     laneMissedMs,
+    laneModelUsed,
     lanePerceptionMode,
     laneProcessingMs,
     laneSegmentationAverageMs,
@@ -835,6 +848,65 @@ export default function Home() {
       ? { ...laneDetectionRef.current, road: manualCalibration, roiConfidence: 0 }
       : null;
   }, [roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLaneModel = async () => {
+      if (!runtimeDefaults.laneModelUrl) {
+        laneSegmentationModelRef.current = null;
+        setLaneModelStatus({
+          detail: "Adapter fallback; no ONNX lane model configured.",
+          label: "Lane Model",
+          state: "idle",
+        });
+        return;
+      }
+
+      setLaneModelStatus({
+        detail: `Loading ${runtimeDefaults.laneModelUrl}`,
+        label: "Lane Model",
+        state: "loading",
+      });
+
+      try {
+        const model = await LaneSegmentationModel.create({
+          inputSize: runtimeDefaults.laneModelInputSize,
+          modelUrl: runtimeDefaults.laneModelUrl,
+          provider: runtimeDefaults.laneModelProvider,
+          threshold: runtimeDefaults.laneModelThreshold,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        laneSegmentationModelRef.current = model;
+        setLaneModelStatus({
+          detail: `${model.backend.toUpperCase()} / ${runtimeDefaults.laneModelUrl}`,
+          label: "Lane Model",
+          state: "ready",
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        laneSegmentationModelRef.current = null;
+        setLaneModelStatus({
+          detail: error instanceof Error ? error.message : "Lane model failed to load.",
+          label: "Lane Model",
+          state: "error",
+        });
+      }
+    };
+
+    void loadLaneModel();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stopCamera = useCallback(() => {
     if (gatewayStreamIdRef.current) {
@@ -1653,57 +1725,79 @@ export default function Home() {
 
     const detectLaneCandidates = () => {
       const now = performance.now();
-      if (now - lastDetectionAt >= laneDetectionIntervalMs) {
+      if (now - lastDetectionAt >= laneDetectionIntervalMs && !laneDetectingRef.current) {
+        laneDetectingRef.current = true;
+        lastDetectionAt = now;
         const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
         if (source && isSourceReady(source)) {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
-          const laneStart = performance.now();
-          const perception = runLanePerception(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
-            mode: lanePerceptionMode,
-            options: {
-              filterArtifacts: filterLaneArtifacts,
-              filterHeading: filterLaneHeading,
-              inferMissingLane,
-              joinGapY: laneJoinGapY,
-              minPixelScore: laneMinPixelScore,
-              useRobustScoring: useRobustLaneScoring,
-            },
-          });
-          const nextDetection = smoothLaneDetection(
-            perception.detection,
-            laneDetectionRef.current,
-            roadCalibrationRef.current,
-            laneSmoothing,
-          );
-          const laneElapsed = performance.now() - laneStart;
-          const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
-          const nextSegmentationAverage = pushRollingSample(
-            laneSegmentationSamplesRef.current,
-            perception.segmentationMs,
-            20,
-          );
-          const laneUsable = isLaneDetectionUsable(nextDetection);
-          if (laneUsable) {
-            laneMissedSinceRef.current = null;
-          } else {
-            if (laneWasUsableRef.current) {
-              setLaneDropCount((count) => count + 1);
-            }
-            laneMissedSinceRef.current ??= now;
-          }
-          laneWasUsableRef.current = laneUsable;
-          laneDetectionRef.current = nextDetection;
+          void (async () => {
+            try {
+              const laneStart = performance.now();
+              const perception = await runLanePerception(
+                source,
+                laneDetectionCanvasRef.current!,
+                roadCalibrationRef.current,
+                {
+                  laneModel: laneSegmentationModelRef.current,
+                  mode: lanePerceptionMode,
+                  options: {
+                    filterArtifacts: filterLaneArtifacts,
+                    filterHeading: filterLaneHeading,
+                    inferMissingLane,
+                    joinGapY: laneJoinGapY,
+                    minPixelScore: laneMinPixelScore,
+                    useRobustScoring: useRobustLaneScoring,
+                  },
+                },
+              );
+              const nextDetection = smoothLaneDetection(
+                perception.detection,
+                laneDetectionRef.current,
+                roadCalibrationRef.current,
+                laneSmoothing,
+              );
+              const doneAt = performance.now();
+              const laneElapsed = doneAt - laneStart;
+              const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
+              const nextSegmentationAverage = pushRollingSample(
+                laneSegmentationSamplesRef.current,
+                perception.segmentationMs,
+                20,
+              );
+              const laneUsable = isLaneDetectionUsable(nextDetection);
+              if (laneUsable) {
+                laneMissedSinceRef.current = null;
+              } else {
+                if (laneWasUsableRef.current) {
+                  setLaneDropCount((count) => count + 1);
+                }
+                laneMissedSinceRef.current ??= doneAt;
+              }
+              laneWasUsableRef.current = laneUsable;
+              laneDetectionRef.current = nextDetection;
 
-          if (now - lastStateUpdateAt >= 500) {
-            lastStateUpdateAt = now;
-            setLaneConfidence(nextDetection.confidence);
-            setLaneAverageMs(nextLaneAverage);
-            setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
-            setLaneProcessingMs(laneElapsed);
-            setLaneSegmentationAverageMs(nextSegmentationAverage);
-            setLaneSegmentationMs(perception.segmentationMs);
-            setRoiConfidence(nextDetection.roiConfidence);
-          }
+              if (doneAt - lastStateUpdateAt >= 500) {
+                lastStateUpdateAt = doneAt;
+                setLaneConfidence(nextDetection.confidence);
+                setLaneAverageMs(nextLaneAverage);
+                setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : doneAt - laneMissedSinceRef.current);
+                setLaneProcessingMs(laneElapsed);
+                setLaneSegmentationAverageMs(nextSegmentationAverage);
+                setLaneSegmentationMs(perception.segmentationMs);
+                setLaneModelUsed(perception.modelUsed);
+                setRoiConfidence(nextDetection.roiConfidence);
+              }
+            } catch (error) {
+              setLaneModelStatus({
+                detail: error instanceof Error ? error.message : "Lane perception failed.",
+                label: "Lane Model",
+                state: "error",
+              });
+            } finally {
+              laneDetectingRef.current = false;
+            }
+          })();
         } else {
           laneDetectionRef.current = null;
           if (laneWasUsableRef.current) {
@@ -1719,11 +1813,11 @@ export default function Home() {
             setLaneProcessingMs(0);
             setLaneSegmentationAverageMs(0);
             setLaneSegmentationMs(0);
+            setLaneModelUsed(false);
             setRoiConfidence(0);
           }
+          laneDetectingRef.current = false;
         }
-
-        lastDetectionAt = now;
       }
 
       animationFrame = requestAnimationFrame(detectLaneCandidates);
@@ -1886,6 +1980,10 @@ export default function Home() {
                 <strong>{formatDuration(laneSegmentationMs)}</strong>
               </div>
               <div>
+                <span>Lane Model</span>
+                <strong>{laneModelUsed ? "ONNX" : "Fallback"}</strong>
+              </div>
+              <div>
                 <span>Avg Lane</span>
                 <strong>{formatDuration(laneAverageMs)}</strong>
               </div>
@@ -1944,6 +2042,8 @@ export default function Home() {
               <div className="perception-benchmark">
                 <span>Model URL</span>
                 <strong>{runtimeDefaults.laneModelUrl ? "Configured" : "Adapter fallback"}</strong>
+                <span>Model State</span>
+                <strong>{laneModelStatus.state.toUpperCase()}</strong>
                 <span>Input / Threshold</span>
                 <strong>
                   {runtimeDefaults.laneModelInputSize}px / {runtimeDefaults.laneModelThreshold.toFixed(2)}
@@ -3320,41 +3420,69 @@ function runLanePerception(
   canvas: HTMLCanvasElement,
   roadCalibration: RoadCalibration,
   config: {
+    laneModel: LaneSegmentationModel | null;
     mode: LanePerceptionMode;
     options: LaneDetectionOptions;
   },
-): LanePerceptionResult {
+): Promise<LanePerceptionResult> {
   if (config.mode === "classical") {
-    return {
+    return Promise.resolve({
       detection: detectLaneLinesFromSource(source, canvas, roadCalibration, config.options),
+      modelUsed: false,
       segmentationMs: 0,
-    };
+    });
   }
 
   const segmentationStart = performance.now();
-  const detection = detectLaneLinesFromSegmentationAdapter(source, canvas, roadCalibration, config.mode, config.options);
+  const perception = detectLaneLinesFromSegmentationAdapter(
+    source,
+    canvas,
+    roadCalibration,
+    config.mode,
+    config.options,
+    config.laneModel,
+  );
 
-  return {
-    detection,
+  return perception.then((result) => ({
+    ...result,
     segmentationMs: performance.now() - segmentationStart,
-  };
+  }));
 }
 
-function detectLaneLinesFromSegmentationAdapter(
+async function detectLaneLinesFromSegmentationAdapter(
   source: DetectableSource,
   canvas: HTMLCanvasElement,
   roadCalibration: RoadCalibration,
   mode: Exclude<LanePerceptionMode, "classical">,
   options: LaneDetectionOptions,
-): LaneDetection {
+  laneModel: LaneSegmentationModel | null,
+): Promise<Omit<LanePerceptionResult, "segmentationMs">> {
   const width = runtimeDefaults.laneModelInputSize;
   const height = Math.round(runtimeDefaults.laneModelInputSize * 0.7);
   const birdFrame = renderBirdViewFrame(source, width, height, roadCalibration);
+  if (laneModel) {
+    const result = await laneModel.segment(birdFrame);
+    return {
+      detection: createLaneDetectionFromBirdPaths(
+        result.paths,
+        roadCalibration,
+        result.confidence,
+        [],
+        null,
+        options.inferMissingLane,
+      ),
+      modelUsed: true,
+    };
+  }
+
   canvas.width = birdFrame.width;
   canvas.height = birdFrame.height;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
-    return emptyLaneDetection(roadCalibration);
+    return {
+      detection: emptyLaneDetection(roadCalibration),
+      modelUsed: false,
+    };
   }
 
   context.drawImage(birdFrame, 0, 0);
@@ -3413,14 +3541,17 @@ function detectLaneLinesFromSegmentationAdapter(
   const densityScale = mode === "yolop" ? 3.2 : 2.8;
   const confidence = clamp01(Math.min(maskHits, rowCount * densityScale) / (rowCount * densityScale));
 
-  return createLaneDetectionFromBirdPaths(
-    birdPaths,
-    roadCalibration,
-    confidence,
-    rejectedArtifactPaths,
-    null,
-    segmentationOptions.inferMissingLane,
-  );
+  return {
+    detection: createLaneDetectionFromBirdPaths(
+      birdPaths,
+      roadCalibration,
+      confidence,
+      rejectedArtifactPaths,
+      null,
+      segmentationOptions.inferMissingLane,
+    ),
+    modelUsed: false,
+  };
 }
 
 function detectLaneLinesFromSource(

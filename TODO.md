@@ -360,6 +360,7 @@ Next planning target:
 - [ ] Research lightweight ONNX road/lane segmentation candidates suitable for Chrome WebGPU/WASM.
 - [x] Add adapter interface for segmentation mask to bird-view lane center conversion.
 - [x] Add model config fields for lane model URL, input size, runtime provider, threshold, and frame interval.
+- [x] Add browser ONNX lane segmentation loader and generic mask-to-path decoder.
 - [ ] Add benchmark clips/presets for clear highway, tunnel, dusk, rainy/low-contrast, glare, and worn-lane scenes.
 - [ ] Record metrics: display FPS, YOLO inference time, lane preprocessing time, lane fitting time, segmentation inference time, memory growth, and missed-lane duration.
 - [x] Display current lane detection processing time for algorithm toggle comparisons.

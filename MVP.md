@@ -228,7 +228,7 @@ Implemented MVP bridge:
 
 - `Classical`, `YOLOP`, and `ONNX Seg` buttons are available in the Bird's-Eye View controls.
 - YOLO11n object detection remains active and independent in every lane perception mode.
-- `YOLOP` and `ONNX Seg` initially use a browser-side segmentation adapter fallback until a compatible ONNX model artifact is configured.
+- `YOLOP` and `ONNX Seg` use a browser-side segmentation adapter. When a compatible ONNX model artifact is configured, ONNX Runtime Web runs the mask model in Chrome; otherwise the adapter fallback stays active for comparison.
 - Saved benchmark snapshots include the selected perception mode, segmentation timing, confidence, drop count, ROI controls, and algorithm toggles.
 
 Initial Autopilot rule:
