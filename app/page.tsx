@@ -171,6 +171,7 @@ const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
 const laneDetectionDefaultJoinGapY = 0.16;
 const laneDetectionDefaultMinPixelScore = 18;
+const laneDetectionDefaultSmoothing = 0.62;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -278,6 +279,7 @@ export default function Home() {
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
+  const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
   const [roiConfidence, setRoiConfidence] = useState(0);
 
   const llmStatus: RuntimeStatus = useMemo(
@@ -365,6 +367,7 @@ export default function Home() {
     setBirdViewHeightScale(birdViewDefaultHeightScale);
     setLaneJoinGapY(laneDetectionDefaultJoinGapY);
     setLaneMinPixelScore(laneDetectionDefaultMinPixelScore);
+    setLaneSmoothing(laneDetectionDefaultSmoothing);
     setRoiBottomWidth(birdViewDefaultBottomWidth);
     setRoiBottomY(birdViewDefaultBottomY);
     setRoiConfidence(0);
@@ -435,6 +438,7 @@ export default function Home() {
       birdViewHeightScale: number;
       laneJoinGapY: number;
       laneMinPixelScore: number;
+      laneSmoothing: number;
       roiBottomWidth: number;
       roiBottomY: number;
       roiTopCenterX: number;
@@ -459,6 +463,9 @@ export default function Home() {
         }
         if (typeof cachedSettings?.laneMinPixelScore === "number") {
           setLaneMinPixelScore(clamp(cachedSettings.laneMinPixelScore, 8, 42));
+        }
+        if (typeof cachedSettings?.laneSmoothing === "number") {
+          setLaneSmoothing(clamp(cachedSettings.laneSmoothing, 0, 0.9));
         }
         if (typeof cachedSettings?.roiBottomWidth === "number") {
           setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
@@ -491,6 +498,7 @@ export default function Home() {
         birdViewHeightScale,
         laneJoinGapY,
         laneMinPixelScore,
+        laneSmoothing,
         roiBottomWidth,
         roiBottomY,
         roiTopCenterX,
@@ -503,6 +511,7 @@ export default function Home() {
     birdViewSettingsHydrated,
     laneJoinGapY,
     laneMinPixelScore,
+    laneSmoothing,
     roiBottomWidth,
     roiBottomY,
     roiTopCenterX,
@@ -1341,14 +1350,13 @@ export default function Home() {
             joinGapY: laneJoinGapY,
             minPixelScore: laneMinPixelScore,
           });
-          detection.road = roadCalibrationRef.current;
-          detection.roiConfidence = detection.confidence;
-          laneDetectionRef.current = detection;
+          const nextDetection = smoothLaneDetection(detection, laneDetectionRef.current, roadCalibrationRef.current, laneSmoothing);
+          laneDetectionRef.current = nextDetection;
 
           if (now - lastStateUpdateAt >= 500) {
             lastStateUpdateAt = now;
-            setLaneConfidence(detection.confidence);
-            setRoiConfidence(detection.roiConfidence);
+            setLaneConfidence(nextDetection.confidence);
+            setRoiConfidence(nextDetection.roiConfidence);
           }
         } else {
           laneDetectionRef.current = null;
@@ -1367,7 +1375,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
-  }, [laneJoinGapY, laneMinPixelScore, roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
+  }, [laneJoinGapY, laneMinPixelScore, laneSmoothing, roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY, sourceSurface]);
 
   return (
     <main className="app-shell">
@@ -1625,6 +1633,18 @@ export default function Home() {
                   }}
                 />
                 <strong>{laneJoinGapY.toFixed(2)}</strong>
+              </label>
+              <label>
+                <span>Lane Smooth</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="0.9"
+                  step="0.05"
+                  value={laneSmoothing}
+                  onChange={(event) => setLaneSmoothing(Number(event.target.value))}
+                />
+                <strong>{laneSmoothing.toFixed(2)}</strong>
               </label>
               <button className="secondary-button compact-button" type="button" onClick={resetBirdViewSettings}>
                 Reset Bird View
@@ -2750,27 +2770,13 @@ function detectLaneLinesFromSource(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
   );
   const birdPaths = extendBirdLanePaths(detectedBirdPaths);
-  const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
-  const laneBands = createLaneBands(birdPaths, roadCalibration);
-  const left = sourcePaths.filter((path) => pathAverageX(path) < 0.5);
-  const right = sourcePaths.filter((path) => pathAverageX(path) >= 0.5);
   const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
   const rowCount = Math.max(1, Math.floor((scanEndY - scanStartY) / 3));
   const confidence = clamp01(
     Math.min(pointCount, rowCount * 2.4) / (rowCount * 2.4),
   );
 
-  return {
-    birdPaths,
-    confidence,
-    laneBands,
-    left,
-    road: roadCalibration,
-    right,
-    roiConfidence: confidence,
-    sourcePaths,
-    updatedAt: performance.now(),
-  };
+  return createLaneDetectionFromBirdPaths(birdPaths, roadCalibration, confidence);
 }
 
 function findLanePixelCandidate(
@@ -2807,6 +2813,86 @@ function findLanePixelCandidate(
   }
 
   return bestScore > minPixelScore ? { score: bestScore, x: bestX } : null;
+}
+
+function createLaneDetectionFromBirdPaths(
+  birdPaths: NormalizedPoint[][],
+  roadCalibration: RoadCalibration,
+  confidence: number,
+): LaneDetection {
+  const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
+  const laneBands = createLaneBands(birdPaths, roadCalibration);
+
+  return {
+    birdPaths,
+    confidence,
+    laneBands,
+    left: sourcePaths.filter((path) => pathAverageX(path) < 0.5),
+    road: roadCalibration,
+    right: sourcePaths.filter((path) => pathAverageX(path) >= 0.5),
+    roiConfidence: confidence,
+    sourcePaths,
+    updatedAt: performance.now(),
+  };
+}
+
+function smoothLaneDetection(
+  current: LaneDetection,
+  previous: LaneDetection | null,
+  roadCalibration: RoadCalibration,
+  smoothing: number,
+) {
+  if (!previous || previous.birdPaths.length === 0 || current.birdPaths.length === 0 || smoothing <= 0) {
+    return createLaneDetectionFromBirdPaths(current.birdPaths, roadCalibration, current.confidence);
+  }
+
+  const safeSmoothing = clamp(smoothing, 0, 0.9);
+  const smoothedPaths = current.birdPaths.map((path) => {
+    const previousPath = findNearestLanePath(path, previous.birdPaths);
+    if (!previousPath) {
+      return path;
+    }
+
+    return smoothBirdLanePath(path, previousPath, safeSmoothing);
+  });
+  const confidence = current.confidence * (1 - safeSmoothing * 0.25) + previous.confidence * safeSmoothing * 0.25;
+
+  return createLaneDetectionFromBirdPaths(smoothedPaths, roadCalibration, confidence);
+}
+
+function findNearestLanePath(path: NormalizedPoint[], candidates: NormalizedPoint[][]) {
+  const center = pathAverageX(path);
+  let nearest: { distance: number; path: NormalizedPoint[] } | null = null;
+
+  for (const candidate of candidates) {
+    const distance = Math.abs(pathAverageX(candidate) - center);
+    if (!nearest || distance < nearest.distance) {
+      nearest = { distance, path: candidate };
+    }
+  }
+
+  return nearest && nearest.distance < 0.14 ? nearest.path : null;
+}
+
+function smoothBirdLanePath(current: NormalizedPoint[], previous: NormalizedPoint[], smoothing: number) {
+  const currentRange = pathYRange(current);
+  const previousRange = pathYRange(previous);
+  const startY = Math.max(0.02, Math.min(currentRange.min, previousRange.min));
+  const endY = Math.min(0.98, Math.max(currentRange.max, previousRange.max));
+  const sampleCount = Math.max(8, Math.min(16, current.length + 2));
+  const points: NormalizedPoint[] = [];
+
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    const y = startY + ((endY - startY) * sample) / Math.max(1, sampleCount - 1);
+    const currentX = pathXAtY(current, y);
+    const previousX = pathXAtY(previous, y);
+    points.push({
+      x: clamp01(previousX * smoothing + currentX * (1 - smoothing)),
+      y,
+    });
+  }
+
+  return points;
 }
 
 function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions): NormalizedPoint[][] {
