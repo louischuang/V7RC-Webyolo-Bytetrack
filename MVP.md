@@ -220,9 +220,16 @@ Benchmark metrics:
 - YOLO inference time.
 - Lane preprocessing time.
 - Lane fitting/fallback time.
-- Optional segmentation model inference time.
+- Segmentation adapter/model inference time and rolling average.
 - Total browser memory growth over long clips.
 - Ego lane continuity, false positives, and missed lane intervals.
+
+Implemented MVP bridge:
+
+- `Classical`, `YOLOP`, and `ONNX Seg` buttons are available in the Bird's-Eye View controls.
+- YOLO11n object detection remains active and independent in every lane perception mode.
+- `YOLOP` and `ONNX Seg` initially use a browser-side segmentation adapter fallback until a compatible ONNX model artifact is configured.
+- Saved benchmark snapshots include the selected perception mode, segmentation timing, confidence, drop count, ROI controls, and algorithm toggles.
 
 Initial Autopilot rule:
 

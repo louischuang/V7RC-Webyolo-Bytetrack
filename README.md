@@ -199,6 +199,21 @@ Keep YOLO11n object detection as the current safety/object baseline, then evalua
 
 The technical evaluation should measure FPS, YOLO time, lane processing time, total UI responsiveness, memory growth, and correctness on clear highway, tunnel, dusk, rainy/low-contrast, and worn-lane clips.
 
+Current implementation status:
+
+- The Bird's-Eye View card now exposes a `Perception` selector for `Classical`, `YOLOP`, and `ONNX Seg`.
+- `Classical` keeps the current YOLO11n object detector plus browser classical lane pipeline.
+- `YOLOP` and `ONNX Seg` currently route through the Layer 3 segmentation adapter benchmark path. Until `NEXT_PUBLIC_LANE_MODEL_URL` points to a browser-compatible ONNX artifact, the adapter uses the same bird-view input and a segmentation-style mask fallback so latency, confidence, drop count, and UI wiring can be compared without disrupting YOLO11n safety detection.
+- Benchmark snapshots include the active perception mode plus lane and segmentation timing fields.
+
+Configurable lane model environment fields:
+
+- `NEXT_PUBLIC_LANE_MODEL_URL`
+- `NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE`
+- `NEXT_PUBLIC_LANE_MODEL_PROVIDER`
+- `NEXT_PUBLIC_LANE_MODEL_FRAME_INTERVAL`
+- `NEXT_PUBLIC_LANE_MODEL_THRESHOLD`
+
 ## Next MVP: Task And Autopilot Console
 
 The next UI milestone changes the main workspace from two columns into three columns:
