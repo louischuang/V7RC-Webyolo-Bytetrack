@@ -112,6 +112,7 @@ type LaneDetection = {
 };
 type LaneDetectionOptions = {
   filterArtifacts: boolean;
+  filterHeading: boolean;
   inferMissingLane: boolean;
   joinGapY: number;
   minPixelScore: number;
@@ -193,6 +194,7 @@ const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
 const birdViewDefaultShowDebugArtifacts = true;
 const laneDetectionDefaultFilterArtifacts = true;
+const laneDetectionDefaultFilterHeading = true;
 const laneDetectionDefaultInferMissingLane = true;
 const laneDetectionDefaultUseRobustScoring = true;
 const laneDetectionDefaultJoinGapY = 0.16;
@@ -305,6 +307,7 @@ export default function Home() {
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [showLaneDebugArtifacts, setShowLaneDebugArtifacts] = useState(birdViewDefaultShowDebugArtifacts);
   const [filterLaneArtifacts, setFilterLaneArtifacts] = useState(laneDetectionDefaultFilterArtifacts);
+  const [filterLaneHeading, setFilterLaneHeading] = useState(laneDetectionDefaultFilterHeading);
   const [inferMissingLane, setInferMissingLane] = useState(laneDetectionDefaultInferMissingLane);
   const [useRobustLaneScoring, setUseRobustLaneScoring] = useState(laneDetectionDefaultUseRobustScoring);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
@@ -399,6 +402,7 @@ export default function Home() {
     setBirdViewHeightScale(birdViewDefaultHeightScale);
     setShowLaneDebugArtifacts(birdViewDefaultShowDebugArtifacts);
     setFilterLaneArtifacts(laneDetectionDefaultFilterArtifacts);
+    setFilterLaneHeading(laneDetectionDefaultFilterHeading);
     setInferMissingLane(laneDetectionDefaultInferMissingLane);
     setUseRobustLaneScoring(laneDetectionDefaultUseRobustScoring);
     setLaneJoinGapY(laneDetectionDefaultJoinGapY);
@@ -473,6 +477,7 @@ export default function Home() {
     let cachedSettings: Partial<{
       birdViewHeightScale: number;
       filterLaneArtifacts: boolean;
+      filterLaneHeading: boolean;
       inferMissingLane: boolean;
       laneJoinGapY: number;
       laneMinPixelScore: number;
@@ -500,6 +505,9 @@ export default function Home() {
         }
         if (typeof cachedSettings?.filterLaneArtifacts === "boolean") {
           setFilterLaneArtifacts(cachedSettings.filterLaneArtifacts);
+        }
+        if (typeof cachedSettings?.filterLaneHeading === "boolean") {
+          setFilterLaneHeading(cachedSettings.filterLaneHeading);
         }
         if (typeof cachedSettings?.inferMissingLane === "boolean") {
           setInferMissingLane(cachedSettings.inferMissingLane);
@@ -549,6 +557,7 @@ export default function Home() {
       JSON.stringify({
         birdViewHeightScale,
         filterLaneArtifacts,
+        filterLaneHeading,
         inferMissingLane,
         laneJoinGapY,
         laneMinPixelScore,
@@ -566,6 +575,7 @@ export default function Home() {
     birdViewHeightScale,
     birdViewSettingsHydrated,
     filterLaneArtifacts,
+    filterLaneHeading,
     inferMissingLane,
     laneJoinGapY,
     laneMinPixelScore,
@@ -1410,6 +1420,7 @@ export default function Home() {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
           const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
             filterArtifacts: filterLaneArtifacts,
+            filterHeading: filterLaneHeading,
             inferMissingLane,
             joinGapY: laneJoinGapY,
             minPixelScore: laneMinPixelScore,
@@ -1442,6 +1453,7 @@ export default function Home() {
     return () => cancelAnimationFrame(animationFrame);
   }, [
     filterLaneArtifacts,
+    filterLaneHeading,
     inferMissingLane,
     laneJoinGapY,
     laneMinPixelScore,
@@ -1755,6 +1767,18 @@ export default function Home() {
                   }}
                 />
                 <strong>{filterLaneArtifacts ? "ON" : "OFF"}</strong>
+              </label>
+              <label className="checkbox-control">
+                <span>Heading Filter</span>
+                <input
+                  type="checkbox"
+                  checked={filterLaneHeading}
+                  onChange={(event) => {
+                    setFilterLaneHeading(event.target.checked);
+                    setRoiConfidence(0);
+                  }}
+                />
+                <strong>{filterLaneHeading ? "ON" : "OFF"}</strong>
               </label>
               <label className="checkbox-control">
                 <span>Infer Missing Lane</span>
@@ -2964,9 +2988,12 @@ function detectLaneLinesFromSource(
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
   );
+  const headingFilteredBirdPaths = options.filterHeading
+    ? filterLanePathsByHeading(detectedBirdPaths)
+    : detectedBirdPaths;
   const pathFilterResult = options.filterArtifacts
-    ? filterOverheadCenterArtifacts(detectedBirdPaths)
-    : { accepted: detectedBirdPaths, rejected: [] };
+    ? filterOverheadCenterArtifacts(headingFilteredBirdPaths)
+    : { accepted: headingFilteredBirdPaths, rejected: [] };
   const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
   const birdPaths = extendBirdLanePaths(pathFilterResult.accepted);
   const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
@@ -3334,6 +3361,34 @@ function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
   return paths
     .filter((path) => path.length >= 2)
     .sort((a, b) => pathAverageX(a) - pathAverageX(b));
+}
+
+function filterLanePathsByHeading(paths: NormalizedPoint[][]) {
+  if (paths.length < 3) {
+    return paths;
+  }
+
+  return paths.filter((path) => {
+    const range = pathYRange(path);
+    if (range.max - range.min < 0.2) {
+      return true;
+    }
+
+    const bottomX = pathXAtY(path, 0.9);
+    const topX = pathXAtY(path, 0.25);
+    const heading = bottomX - topX;
+    const expectedSign = bottomX < 0.48 ? -1 : bottomX > 0.52 ? 1 : 0;
+    const isCenterGuide = Math.abs(bottomX - 0.5) <= 0.08 && Math.abs(heading) < 0.14;
+
+    if (isCenterGuide || expectedSign === 0) {
+      return true;
+    }
+
+    const headingMatchesSide = Math.sign(heading) === expectedSign;
+    const isNearlyVertical = Math.abs(heading) < 0.08;
+
+    return headingMatchesSide || isNearlyVertical;
+  });
 }
 
 function filterOverheadCenterArtifacts(paths: NormalizedPoint[][]) {

@@ -342,7 +342,8 @@ Next planning target:
 - [x] Add center vertical artifact filtering to reject tunnel overhead lights before lane-band creation.
 - [x] Draw rejected center artifacts as debug overlay for tuning.
 - [x] Add UI toggle for rejected artifact debug overlays.
-- [ ] Add vanishing-point or heading consistency checks to reject wall edges, tunnel lights, and dashboard/map overlays.
+- [x] Add conservative heading consistency filter for lane candidate paths.
+- [ ] Add vanishing-point consistency checks to reject wall edges, tunnel lights, and dashboard/map overlays.
 - [ ] Label fallback overlays as `inferred lane` or `predicted lane`.
 - [ ] Generate proportional steering from lane center offset.
 - [ ] In clear-lane conditions, command 50% forward throttle.
