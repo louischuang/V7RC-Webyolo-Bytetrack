@@ -323,6 +323,7 @@ Next planning target:
 - [x] Add Canvas-based adaptive luminance/gamma compensation before lane candidate scoring.
 - [x] Add Canvas-based white/yellow/edge evidence fusion for weak lane markings.
 - [x] Add UI toggle to compare robust lane scoring with the legacy RGB scorer.
+- [x] Add UI toggles for artifact filtering and inferred missing-lane fallback.
 - [ ] Add Layer 1 CLAHE/local contrast enhancement for low-light, tunnel, dusk, and rainy clips.
 - [ ] Add automatic gamma correction before lane thresholding.
 - [ ] Add HSV/HLS white/yellow lane masks and compare against current RGB brightness scoring.

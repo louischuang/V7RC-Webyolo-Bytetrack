@@ -98,6 +98,7 @@ type LaneDetection = {
   egoLaneHeading: number | null;
   egoLaneIndex: number | null;
   estimatedLaneWidth: number | null;
+  inferMissingLane: boolean;
   laneBands: LaneBand[];
   left: NormalizedPoint[][];
   confidence: number;
@@ -110,6 +111,8 @@ type LaneDetection = {
   updatedAt: number;
 };
 type LaneDetectionOptions = {
+  filterArtifacts: boolean;
+  inferMissingLane: boolean;
   joinGapY: number;
   minPixelScore: number;
   useRobustScoring: boolean;
@@ -189,6 +192,8 @@ const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
 const birdViewDefaultShowDebugArtifacts = true;
+const laneDetectionDefaultFilterArtifacts = true;
+const laneDetectionDefaultInferMissingLane = true;
 const laneDetectionDefaultUseRobustScoring = true;
 const laneDetectionDefaultJoinGapY = 0.16;
 const laneDetectionDefaultMinPixelScore = 18;
@@ -299,6 +304,8 @@ export default function Home() {
   const [roiBottomWidth, setRoiBottomWidth] = useState(birdViewDefaultBottomWidth);
   const [birdViewHeightScale, setBirdViewHeightScale] = useState(birdViewDefaultHeightScale);
   const [showLaneDebugArtifacts, setShowLaneDebugArtifacts] = useState(birdViewDefaultShowDebugArtifacts);
+  const [filterLaneArtifacts, setFilterLaneArtifacts] = useState(laneDetectionDefaultFilterArtifacts);
+  const [inferMissingLane, setInferMissingLane] = useState(laneDetectionDefaultInferMissingLane);
   const [useRobustLaneScoring, setUseRobustLaneScoring] = useState(laneDetectionDefaultUseRobustScoring);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
@@ -391,6 +398,8 @@ export default function Home() {
   const resetBirdViewSettings = useCallback(() => {
     setBirdViewHeightScale(birdViewDefaultHeightScale);
     setShowLaneDebugArtifacts(birdViewDefaultShowDebugArtifacts);
+    setFilterLaneArtifacts(laneDetectionDefaultFilterArtifacts);
+    setInferMissingLane(laneDetectionDefaultInferMissingLane);
     setUseRobustLaneScoring(laneDetectionDefaultUseRobustScoring);
     setLaneJoinGapY(laneDetectionDefaultJoinGapY);
     setLaneMinPixelScore(laneDetectionDefaultMinPixelScore);
@@ -463,6 +472,8 @@ export default function Home() {
   useEffect(() => {
     let cachedSettings: Partial<{
       birdViewHeightScale: number;
+      filterLaneArtifacts: boolean;
+      inferMissingLane: boolean;
       laneJoinGapY: number;
       laneMinPixelScore: number;
       laneSmoothing: number;
@@ -486,6 +497,12 @@ export default function Home() {
       queueMicrotask(() => {
         if (typeof cachedSettings?.birdViewHeightScale === "number") {
           setBirdViewHeightScale(clamp(cachedSettings.birdViewHeightScale, 1, 2));
+        }
+        if (typeof cachedSettings?.filterLaneArtifacts === "boolean") {
+          setFilterLaneArtifacts(cachedSettings.filterLaneArtifacts);
+        }
+        if (typeof cachedSettings?.inferMissingLane === "boolean") {
+          setInferMissingLane(cachedSettings.inferMissingLane);
         }
         if (typeof cachedSettings?.laneJoinGapY === "number") {
           setLaneJoinGapY(clamp(cachedSettings.laneJoinGapY, 0.04, 0.25));
@@ -531,6 +548,8 @@ export default function Home() {
       birdViewSettingsStorageKey,
       JSON.stringify({
         birdViewHeightScale,
+        filterLaneArtifacts,
+        inferMissingLane,
         laneJoinGapY,
         laneMinPixelScore,
         laneSmoothing,
@@ -546,6 +565,8 @@ export default function Home() {
   }, [
     birdViewHeightScale,
     birdViewSettingsHydrated,
+    filterLaneArtifacts,
+    inferMissingLane,
     laneJoinGapY,
     laneMinPixelScore,
     laneSmoothing,
@@ -1388,6 +1409,8 @@ export default function Home() {
         if (source && isSourceReady(source)) {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
           const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
+            filterArtifacts: filterLaneArtifacts,
+            inferMissingLane,
             joinGapY: laneJoinGapY,
             minPixelScore: laneMinPixelScore,
             useRobustScoring: useRobustLaneScoring,
@@ -1418,6 +1441,8 @@ export default function Home() {
     animationFrame = requestAnimationFrame(detectLaneCandidates);
     return () => cancelAnimationFrame(animationFrame);
   }, [
+    filterLaneArtifacts,
+    inferMissingLane,
     laneJoinGapY,
     laneMinPixelScore,
     laneSmoothing,
@@ -1718,6 +1743,30 @@ export default function Home() {
                   }}
                 />
                 <strong>{useRobustLaneScoring ? "ON" : "OFF"}</strong>
+              </label>
+              <label className="checkbox-control">
+                <span>Artifact Filter</span>
+                <input
+                  type="checkbox"
+                  checked={filterLaneArtifacts}
+                  onChange={(event) => {
+                    setFilterLaneArtifacts(event.target.checked);
+                    setRoiConfidence(0);
+                  }}
+                />
+                <strong>{filterLaneArtifacts ? "ON" : "OFF"}</strong>
+              </label>
+              <label className="checkbox-control">
+                <span>Infer Missing Lane</span>
+                <input
+                  type="checkbox"
+                  checked={inferMissingLane}
+                  onChange={(event) => {
+                    setInferMissingLane(event.target.checked);
+                    setRoiConfidence(0);
+                  }}
+                />
+                <strong>{inferMissingLane ? "ON" : "OFF"}</strong>
               </label>
               <label className="checkbox-control">
                 <span>Debug Artifacts</span>
@@ -2915,7 +2964,9 @@ function detectLaneLinesFromSource(
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
   );
-  const pathFilterResult = filterOverheadCenterArtifacts(detectedBirdPaths);
+  const pathFilterResult = options.filterArtifacts
+    ? filterOverheadCenterArtifacts(detectedBirdPaths)
+    : { accepted: detectedBirdPaths, rejected: [] };
   const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
   const birdPaths = extendBirdLanePaths(pathFilterResult.accepted);
   const pointCount = [...birdPointsByColumn.values()].reduce((total, points) => total + points.length, 0);
@@ -2924,7 +2975,14 @@ function detectLaneLinesFromSource(
     Math.min(pointCount, rowCount * 2.4) / (rowCount * 2.4),
   );
 
-  return createLaneDetectionFromBirdPaths(birdPaths, roadCalibration, confidence, rejectedArtifactPaths);
+  return createLaneDetectionFromBirdPaths(
+    birdPaths,
+    roadCalibration,
+    confidence,
+    rejectedArtifactPaths,
+    null,
+    options.inferMissingLane,
+  );
 }
 
 function findLanePixelCandidate(
@@ -3069,12 +3127,13 @@ function createLaneDetectionFromBirdPaths(
   confidence: number,
   rejectedArtifactPaths: NormalizedPoint[][] = [],
   expectedLaneWidth?: number | null,
+  inferMissingLane = true,
 ): LaneDetection {
   const sourcePaths = birdPaths.map((path) => path.map((point) => birdPointToSourcePoint(point, roadCalibration)));
   const sourceRejectedArtifactPaths = rejectedArtifactPaths.map((path) =>
     path.map((point) => birdPointToSourcePoint(point, roadCalibration)),
   );
-  const laneBands = createLaneBands(birdPaths, roadCalibration, expectedLaneWidth);
+  const laneBands = createLaneBands(birdPaths, roadCalibration, expectedLaneWidth, inferMissingLane);
   const estimatedLaneWidth = estimateBirdLaneWidth(laneBands, birdPaths, expectedLaneWidth);
   const egoLane = estimateEgoLane(laneBands);
 
@@ -3085,6 +3144,7 @@ function createLaneDetectionFromBirdPaths(
     egoLaneHeading: egoLane?.heading ?? null,
     egoLaneIndex: egoLane?.index ?? null,
     estimatedLaneWidth,
+    inferMissingLane,
     laneBands,
     left: sourcePaths.filter((path) => pathAverageX(path) < 0.5),
     rejectedArtifactPaths,
@@ -3146,6 +3206,7 @@ function smoothLaneDetection(
       current.confidence,
       current.rejectedArtifactPaths,
       previous?.estimatedLaneWidth,
+      current.inferMissingLane,
     );
   }
 
@@ -3166,6 +3227,7 @@ function smoothLaneDetection(
     confidence,
     current.rejectedArtifactPaths,
     previous.estimatedLaneWidth,
+    current.inferMissingLane,
   );
 }
 
@@ -3375,6 +3437,7 @@ function createLaneBands(
   birdPaths: NormalizedPoint[][],
   roadCalibration: RoadCalibration,
   expectedLaneWidth?: number | null,
+  inferMissingLane = true,
 ): LaneBand[] {
   const sortedPaths = mergeNearbyBirdLanePaths(birdPaths);
   const laneBands: LaneBand[] = [];
@@ -3421,7 +3484,9 @@ function createLaneBands(
     });
   }
 
-  const inferredBands = createInferredLaneBands(sortedPaths, laneBands, roadCalibration, expectedLaneWidth);
+  const inferredBands = inferMissingLane
+    ? createInferredLaneBands(sortedPaths, laneBands, roadCalibration, expectedLaneWidth)
+    : [];
   return [...laneBands, ...inferredBands].sort((a, b) => laneBandAverageX(a) - laneBandAverageX(b));
 }
 
@@ -3580,6 +3645,7 @@ function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
     egoLaneHeading: null,
     egoLaneIndex: null,
     estimatedLaneWidth: null,
+    inferMissingLane: true,
     laneBands: [],
     left: [],
     rejectedArtifactPaths: [],
