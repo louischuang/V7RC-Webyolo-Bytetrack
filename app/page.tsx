@@ -343,6 +343,7 @@ export default function Home() {
   const [robotTaskMode, setRobotTaskMode] = useState<RobotTaskMode>("autopilot");
   const [robotTaskStatus, setRobotTaskStatus] = useState<RobotTaskStatus>("idle");
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
+  const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [laneConfidence, setLaneConfidence] = useState(0);
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
   const [roiTopCenterX, setRoiTopCenterX] = useState(birdViewDefaultTopCenterX);
@@ -395,6 +396,10 @@ export default function Home() {
   );
 
   const robotChannelPreview = useMemo(() => previewSrtChannels(robotIntent, robotDriveMode).slice(0, 4), [robotDriveMode, robotIntent]);
+  const autopilotChannelPreview = useMemo(
+    () => previewSrtChannels(autopilotSuggestion, robotDriveMode).slice(0, 2),
+    [autopilotSuggestion, robotDriveMode],
+  );
 
   const robotPacketPreview = useMemo(
     () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(robotIntent, robotDriveMode))),
@@ -405,17 +410,33 @@ export default function Home() {
     if (robotTaskMode === "autopilot") {
       const offset = laneDetectionRef.current?.egoLaneCenterOffset;
       const laneText = typeof offset === "number" ? ` Ego lane offset ${formatSignedNumber(offset)}.` : " Ego lane pending.";
+      const suggestionText =
+        autopilotSuggestion.neutral || !autopilotSuggestion.autonomy
+          ? " Suggested command: neutral."
+          : ` Suggested command: ${Math.round(autopilotSuggestion.speedScale * 100)}% forward, turn ${formatSignedNumber(autopilotSuggestion.turn)}.`;
       const modeText = [
         useRobustLaneScoring ? "robust" : "legacy",
         filterLaneArtifacts ? "artifact-filter" : "no-artifact-filter",
         filterLaneHeading ? "heading-filter" : "no-heading-filter",
         inferMissingLane ? "infer-lane" : "no-infer-lane",
       ].join(" / ");
-      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}`;
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}${suggestionText}`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
-  }, [filterLaneArtifacts, filterLaneHeading, inferMissingLane, laneConfidence, robotTaskMode, roiConfidence, useRobustLaneScoring]);
+  }, [
+    autopilotSuggestion.autonomy,
+    autopilotSuggestion.neutral,
+    autopilotSuggestion.speedScale,
+    autopilotSuggestion.turn,
+    filterLaneArtifacts,
+    filterLaneHeading,
+    inferMissingLane,
+    laneConfidence,
+    robotTaskMode,
+    roiConfidence,
+    useRobustLaneScoring,
+  ]);
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -1326,11 +1347,13 @@ export default function Home() {
   }, []);
 
   const sendRobotNeutral = useCallback(() => {
+    setAutopilotSuggestion(createNeutralIntent());
     sendRobotIntent(createNeutralIntent());
     setRobotMode("suggestion");
   }, [sendRobotIntent]);
 
   const sendRobotEmergencyStop = useCallback(() => {
+    setAutopilotSuggestion(createNeutralIntent());
     sendRobotIntent({
       ...createNeutralIntent(),
       emergencyStop: true,
@@ -1343,18 +1366,41 @@ export default function Home() {
     if (robotTaskStatus === "running") {
       setRobotTaskStatus("idle");
       setRobotTaskMessage("任務已停止，等待下一次 Start。");
+      setAutopilotSuggestion(createNeutralIntent());
       sendRobotIntent(createNeutralIntent());
       return;
     }
 
     setRobotTaskStatus("running");
     if (robotTaskMode === "autopilot") {
-      setRobotTaskMessage("自動駕駛啟動：等待 OpenCV 車道線與 YOLO 安全狀態。");
+      setAutopilotSuggestion(createNeutralIntent());
+      sendRobotIntent(createNeutralIntent());
+      setRobotTaskMessage("自動駕駛啟動：等待車道線與 YOLO 安全狀態。");
       return;
     }
 
     setRobotTaskMessage("解任務啟動：等待 Gemma 產生短 JSON 動作計畫。");
   }, [robotTaskMode, robotTaskStatus, sendRobotIntent]);
+
+  const applyAutopilotLaneDecision = useCallback(
+    (detection: LaneDetection | null, laneUsable: boolean) => {
+      if (robotTaskMode !== "autopilot" || robotTaskStatus !== "running") {
+        return;
+      }
+
+      const decision = createAutopilotLaneDecision(detection, laneUsable);
+      setAutopilotSuggestion(decision.intent);
+      setRobotTaskMessage(decision.message);
+
+      if (robotMode === "armed" && robotStatus.connected && !decision.intent.neutral) {
+        sendRobotIntent(decision.intent);
+        return;
+      }
+
+      sendRobotIntent(createNeutralIntent());
+    },
+    [robotMode, robotStatus.connected, robotTaskMode, robotTaskStatus, sendRobotIntent],
+  );
 
   useEffect(() => {
     if (!robotStatus.connected) {
@@ -1636,6 +1682,7 @@ export default function Home() {
             setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(laneElapsed);
             setRoiConfidence(nextDetection.roiConfidence);
+            applyAutopilotLaneDecision(nextDetection, laneUsable);
           }
         } else {
           laneDetectionRef.current = null;
@@ -1651,6 +1698,7 @@ export default function Home() {
             setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(0);
             setRoiConfidence(0);
+            applyAutopilotLaneDecision(null, false);
           }
         }
 
@@ -1676,6 +1724,7 @@ export default function Home() {
     roiTopY,
     sourceSurface,
     useRobustLaneScoring,
+    applyAutopilotLaneDecision,
   ]);
 
   return (
@@ -1822,6 +1871,14 @@ export default function Home() {
               <div>
                 <span>Lane Drops</span>
                 <strong>{laneDropCount}</strong>
+              </div>
+              <div>
+                <span>Suggest CH0</span>
+                <strong>{autopilotChannelPreview[0]?.pwmUs ?? 1500} us</strong>
+              </div>
+              <div>
+                <span>Suggest CH1</span>
+                <strong>{autopilotChannelPreview[1]?.pwmUs ?? 1500} us</strong>
               </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
@@ -3483,6 +3540,31 @@ function laneBandCenterAtY(band: LaneBand, y: number) {
 
 function isLaneDetectionUsable(detection: LaneDetection) {
   return detection.confidence >= 0.35 && detection.laneBands.length > 0 && detection.egoLaneIndex !== null;
+}
+
+function createAutopilotLaneDecision(detection: LaneDetection | null, laneUsable: boolean) {
+  if (!detection || !laneUsable || detection.egoLaneCenterOffset === null) {
+    return {
+      intent: createNeutralIntent(),
+      message: "自動駕駛：車道不可用或暫時遺失，建議保持 neutral。",
+    };
+  }
+
+  const heading = detection.egoLaneHeading ?? 0;
+  const turn = clamp(detection.egoLaneCenterOffset * 2.2 + heading * 1.2, -0.55, 0.55);
+  const intent: V7rcRobotIntent = {
+    ...createNeutralIntent(),
+    autonomy: true,
+    linear: 1,
+    neutral: false,
+    speedScale: 0.5,
+    turn,
+  };
+
+  return {
+    intent,
+    message: `自動駕駛：車道可用，建議 50% 前進，轉向 ${formatSignedNumber(turn)}。Suggestion 模式只顯示建議；Armed 且已連線才會送出。`,
+  };
 }
 
 function smoothLaneDetection(
