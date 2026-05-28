@@ -439,6 +439,81 @@ export default function Home() {
     setLaneProcessingMs(0);
   }, []);
 
+  const copyLaneBenchmarkSnapshot = useCallback(async () => {
+    const laneDetection = laneDetectionRef.current;
+    const snapshot = {
+      capturedAt: new Date().toISOString(),
+      source: {
+        mode: sourceMode,
+        summary: sourceSummary,
+      },
+      algorithms: {
+        artifactFilter: filterLaneArtifacts,
+        debugArtifacts: showLaneDebugArtifacts,
+        headingFilter: filterLaneHeading,
+        inferMissingLane,
+        robustScoring: useRobustLaneScoring,
+      },
+      controls: {
+        birdViewHeightScale,
+        laneJoinGapY,
+        laneMinPixelScore,
+        laneSmoothing,
+        roiBottomWidth,
+        roiBottomY,
+        roiTopCenterX,
+        roiTopWidth,
+        roiTopY,
+      },
+      metrics: {
+        averageLaneMs: laneAverageMs,
+        laneConfidence,
+        laneDropCount,
+        laneMissedMs,
+        laneProcessingMs,
+        roiConfidence,
+      },
+      result: {
+        egoLaneCenterOffset: laneDetection?.egoLaneCenterOffset ?? null,
+        egoLaneHeading: laneDetection?.egoLaneHeading ?? null,
+        egoLaneIndex: laneDetection?.egoLaneIndex ?? null,
+        estimatedLaneWidth: laneDetection?.estimatedLaneWidth ?? null,
+        laneBandCount: laneDetection?.laneBands.length ?? 0,
+        rejectedArtifactCount: laneDetection?.rejectedArtifactPaths.length ?? 0,
+      },
+    };
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      setRobotTaskMessage("Lane benchmark metrics copied.");
+    } catch {
+      setRobotTaskMessage("無法複製 lane benchmark metrics，請確認瀏覽器剪貼簿權限。");
+    }
+  }, [
+    birdViewHeightScale,
+    filterLaneArtifacts,
+    filterLaneHeading,
+    inferMissingLane,
+    laneAverageMs,
+    laneConfidence,
+    laneDropCount,
+    laneJoinGapY,
+    laneMinPixelScore,
+    laneMissedMs,
+    laneProcessingMs,
+    laneSmoothing,
+    roiBottomWidth,
+    roiBottomY,
+    roiConfidence,
+    roiTopCenterX,
+    roiTopWidth,
+    roiTopY,
+    showLaneDebugArtifacts,
+    sourceMode,
+    sourceSummary,
+    useRobustLaneScoring,
+  ]);
+
   useEffect(() => {
     let cachedSettings: Partial<{
       includeFrame: boolean;
@@ -1869,6 +1944,9 @@ export default function Home() {
               </button>
               <button className="secondary-button compact-button" type="button" onClick={resetLaneBenchmarkMetrics}>
                 Reset Metrics
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={copyLaneBenchmarkSnapshot}>
+                Copy Metrics
               </button>
             </div>
             <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
