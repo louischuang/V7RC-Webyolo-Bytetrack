@@ -4,6 +4,7 @@ export type LaneSegmentationConfig = {
   inputSize: number;
   modelUrl: string;
   provider: string;
+  targetChannel: number;
   threshold: number;
 };
 
@@ -67,7 +68,7 @@ export class LaneSegmentationModel {
       return { confidence: 0, paths: [] };
     }
 
-    return decodeSegmentationMask(output.data, output.dims, this.config.threshold);
+    return decodeSegmentationMask(output.data, output.dims, this.config.threshold, this.config.targetChannel);
   }
 }
 
@@ -106,7 +107,12 @@ function preprocessSource(source: CanvasImageSource, inputSize: number) {
   return data;
 }
 
-function decodeSegmentationMask(data: Float32Array, dims: readonly number[], threshold: number): LaneSegmentationResult {
+function decodeSegmentationMask(
+  data: Float32Array,
+  dims: readonly number[],
+  threshold: number,
+  targetChannel: number,
+): LaneSegmentationResult {
   const shape = inferMaskShape(dims, data.length);
   if (!shape) {
     return { confidence: 0, paths: [] };
@@ -126,7 +132,7 @@ function decodeSegmentationMask(data: Float32Array, dims: readonly number[], thr
       let bestScore = threshold;
 
       for (let x = startX; x <= endX; x += 1) {
-        const score = readMaskValue(data, shape, x, y);
+        const score = readMaskValue(data, shape, x, y, targetChannel);
         if (score > bestScore) {
           bestScore = score;
           bestX = x;
@@ -179,8 +185,24 @@ function readMaskValue(
   },
   x: number,
   y: number,
+  targetChannel: number,
 ) {
-  const laneChannel = shape.channels > 1 ? shape.channels - 1 : 0;
-  const offset = laneChannel * shape.width * shape.height + y * shape.width + x;
-  return data[offset] ?? 0;
+  const safeTargetChannel = Math.max(0, Math.min(shape.channels - 1, Math.round(targetChannel)));
+  const targetOffset = safeTargetChannel * shape.width * shape.height + y * shape.width + x;
+
+  if (shape.channels <= 1) {
+    return data[targetOffset] ?? 0;
+  }
+
+  let bestChannel = 0;
+  let bestValue = -Infinity;
+  for (let channel = 0; channel < shape.channels; channel += 1) {
+    const value = data[channel * shape.width * shape.height + y * shape.width + x] ?? -Infinity;
+    if (value > bestValue) {
+      bestValue = value;
+      bestChannel = channel;
+    }
+  }
+
+  return bestChannel === safeTargetChannel ? 1 : 0;
 }

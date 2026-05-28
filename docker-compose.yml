@@ -11,6 +11,11 @@ services:
       NEXT_PUBLIC_LLM_DEVICE: webgpu
       NEXT_PUBLIC_LLM_MODEL_ID: gemma-4-E2B-it-ONNX
       NEXT_PUBLIC_LLM_MODEL_URL: /models/gemma4-e2b-it-onnx
+      NEXT_PUBLIC_LANE_MODEL_URL: /models/lane/segformer-b0-cityscapes/model_quantized.onnx
+      NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE: 224
+      NEXT_PUBLIC_LANE_MODEL_PROVIDER: webgpu,wasm
+      NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL: 0
+      NEXT_PUBLIC_LANE_MODEL_THRESHOLD: 0.5
       NEXT_PUBLIC_STREAM_GATEWAY_URL: ${STREAM_GATEWAY_PUBLIC_URL:-http://localhost:3010}
     volumes:
       - ./models:/app/public/models:ro

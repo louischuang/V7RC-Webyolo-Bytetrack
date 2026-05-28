@@ -204,9 +204,10 @@ const runtimeDefaults = {
   llmFrameJpegQuality: Number(process.env.NEXT_PUBLIC_LLM_FRAME_JPEG_QUALITY ?? 0.72),
   streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3010",
   laneModelUrl: process.env.NEXT_PUBLIC_LANE_MODEL_URL ?? "",
-  laneModelInputSize: Number(process.env.NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE ?? 320),
+  laneModelInputSize: Number(process.env.NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE ?? 224),
   laneModelProvider: process.env.NEXT_PUBLIC_LANE_MODEL_PROVIDER ?? "webgpu,wasm",
   laneModelFrameInterval: Number(process.env.NEXT_PUBLIC_LANE_MODEL_FRAME_INTERVAL ?? 1),
+  laneModelTargetChannel: Number(process.env.NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL ?? 0),
   laneModelThreshold: Number(process.env.NEXT_PUBLIC_LANE_MODEL_THRESHOLD ?? 0.5),
 };
 
@@ -874,6 +875,7 @@ export default function Home() {
           inputSize: runtimeDefaults.laneModelInputSize,
           modelUrl: runtimeDefaults.laneModelUrl,
           provider: runtimeDefaults.laneModelProvider,
+          targetChannel: runtimeDefaults.laneModelTargetChannel,
           threshold: runtimeDefaults.laneModelThreshold,
         });
 
@@ -2048,6 +2050,8 @@ export default function Home() {
                 <strong>
                   {runtimeDefaults.laneModelInputSize}px / {runtimeDefaults.laneModelThreshold.toFixed(2)}
                 </strong>
+                <span>Target Channel</span>
+                <strong>{runtimeDefaults.laneModelTargetChannel}</strong>
                 <span>Provider / Interval</span>
                 <strong>
                   {runtimeDefaults.laneModelProvider} / {runtimeDefaults.laneModelFrameInterval}

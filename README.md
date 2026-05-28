@@ -21,6 +21,9 @@ public/models/              # local development path
     yolo11n.onnx
   gemma4-e2b-it-onnx/
     ...
+  lane/
+    segformer-b0-cityscapes/
+      model_quantized.onnx
 
 models/                     # production host-mounted path
   yolo/
@@ -37,6 +40,7 @@ NEXT_PUBLIC_LLM_RUNTIME=transformers
 NEXT_PUBLIC_LLM_DEVICE=webgpu
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
+NEXT_PUBLIC_LANE_MODEL_URL=/models/lane/segformer-b0-cityscapes/model_quantized.onnx
 ```
 
 More details: [docs/models.md](docs/models.md).
@@ -138,6 +142,32 @@ NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-q4f16_1-MLC
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
 NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
+
+## Prepare Lane Segmentation ONNX
+
+Download the current Layer 3 road segmentation benchmark model to the host-side model volume:
+
+```bash
+bash scripts/prepare-lane-segformer-cityscapes.sh
+```
+
+This downloads `Xenova/segformer-b0-finetuned-cityscapes-640-1280` to:
+
+```text
+models/lane/segformer-b0-cityscapes/
+```
+
+Docker Compose mounts `./models` into `/app/public/models`, so the browser serves it from:
+
+```env
+NEXT_PUBLIC_LANE_MODEL_URL=/models/lane/segformer-b0-cityscapes/model_quantized.onnx
+NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE=224
+NEXT_PUBLIC_LANE_MODEL_PROVIDER=webgpu,wasm
+NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL=0
+NEXT_PUBLIC_LANE_MODEL_THRESHOLD=0.5
+```
+
+For this Cityscapes model, target channel `0` is `road`. It is a road-area segmentation benchmark, not a dedicated lane-marking model. YOLOP official Hugging Face currently provides PyTorch-style artifacts rather than a browser-ready ONNX file, so YOLOP remains a mode/adapter target until a compatible ONNX export is prepared.
 
 ## Docker
 
