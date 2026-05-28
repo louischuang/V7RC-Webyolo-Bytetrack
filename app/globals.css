@@ -521,6 +521,40 @@ input {
   width: 100%;
 }
 
+.benchmark-history {
+  display: grid;
+  gap: 6px;
+  margin: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.72);
+}
+
+.benchmark-history-heading,
+.benchmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.benchmark-history-heading span,
+.benchmark-row span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.benchmark-history-heading strong,
+.benchmark-row strong {
+  color: var(--text);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .status-card {
   padding: 12px;
 }

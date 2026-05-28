@@ -366,6 +366,7 @@ Next planning target:
 - [x] Display rolling average lane time and current missed-lane duration.
 - [x] Track lane drop count and add metric reset control.
 - [x] Add copyable lane benchmark snapshot for algorithm comparison notes.
+- [x] Add local lane benchmark history with saved snapshots and clear control.
 - [ ] Compare quality and latency before choosing whether YOLOP/YOLOPv2 or segmentation becomes part of the production MVP.
 
 ## Phase 17 - Safety Controller

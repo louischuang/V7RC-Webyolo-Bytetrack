@@ -124,6 +124,47 @@ type LaneImageStats = {
   contrastBoost: number;
   gammaGain: number;
 };
+type LaneBenchmarkSnapshot = {
+  capturedAt: string;
+  source: {
+    mode: SourceMode;
+    summary: string;
+  };
+  algorithms: {
+    artifactFilter: boolean;
+    debugArtifacts: boolean;
+    headingFilter: boolean;
+    inferMissingLane: boolean;
+    robustScoring: boolean;
+  };
+  controls: {
+    birdViewHeightScale: number;
+    laneJoinGapY: number;
+    laneMinPixelScore: number;
+    laneSmoothing: number;
+    roiBottomWidth: number;
+    roiBottomY: number;
+    roiTopCenterX: number;
+    roiTopWidth: number;
+    roiTopY: number;
+  };
+  metrics: {
+    averageLaneMs: number;
+    laneConfidence: number;
+    laneDropCount: number;
+    laneMissedMs: number;
+    laneProcessingMs: number;
+    roiConfidence: number;
+  };
+  result: {
+    egoLaneCenterOffset: number | null;
+    egoLaneHeading: number | null;
+    egoLaneIndex: number | null;
+    estimatedLaneWidth: number | null;
+    laneBandCount: number;
+    rejectedArtifactCount: number;
+  };
+};
 
 const defaultLlmRuntime = process.env.NEXT_PUBLIC_LLM_RUNTIME ?? "transformers";
 const defaultLlmDevice: LlmDevice = process.env.NEXT_PUBLIC_LLM_DEVICE === "wasm" ? "wasm" : "webgpu";
@@ -167,6 +208,7 @@ const defaultFixedPrompt =
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
+const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
 const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "camera", label: "Camera" },
   { id: "mjpg", label: "MJPG" },
@@ -321,6 +363,7 @@ export default function Home() {
   const [laneAverageMs, setLaneAverageMs] = useState(0);
   const [laneDropCount, setLaneDropCount] = useState(0);
   const [laneMissedMs, setLaneMissedMs] = useState(0);
+  const [laneBenchmarkHistory, setLaneBenchmarkHistory] = useState<LaneBenchmarkSnapshot[]>([]);
 
   const llmStatus: RuntimeStatus = useMemo(
     () => ({
@@ -439,9 +482,9 @@ export default function Home() {
     setLaneProcessingMs(0);
   }, []);
 
-  const copyLaneBenchmarkSnapshot = useCallback(async () => {
+  const buildLaneBenchmarkSnapshot = useCallback((): LaneBenchmarkSnapshot => {
     const laneDetection = laneDetectionRef.current;
-    const snapshot = {
+    return {
       capturedAt: new Date().toISOString(),
       source: {
         mode: sourceMode,
@@ -482,13 +525,6 @@ export default function Home() {
         rejectedArtifactCount: laneDetection?.rejectedArtifactPaths.length ?? 0,
       },
     };
-
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
-      setRobotTaskMessage("Lane benchmark metrics copied.");
-    } catch {
-      setRobotTaskMessage("無法複製 lane benchmark metrics，請確認瀏覽器剪貼簿權限。");
-    }
   }, [
     birdViewHeightScale,
     filterLaneArtifacts,
@@ -513,6 +549,35 @@ export default function Home() {
     sourceSummary,
     useRobustLaneScoring,
   ]);
+
+  const persistLaneBenchmarkHistory = useCallback((history: LaneBenchmarkSnapshot[]) => {
+    setLaneBenchmarkHistory(history);
+    window.localStorage.setItem(laneBenchmarkStorageKey, JSON.stringify(history));
+  }, []);
+
+  const copyLaneBenchmarkSnapshot = useCallback(async () => {
+    const snapshot = buildLaneBenchmarkSnapshot();
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      setRobotTaskMessage("Lane benchmark metrics copied.");
+    } catch {
+      setRobotTaskMessage("無法複製 lane benchmark metrics，請確認瀏覽器剪貼簿權限。");
+    }
+  }, [
+    buildLaneBenchmarkSnapshot,
+  ]);
+
+  const saveLaneBenchmarkSnapshot = useCallback(() => {
+    const nextHistory = [buildLaneBenchmarkSnapshot(), ...laneBenchmarkHistory].slice(0, 12);
+    persistLaneBenchmarkHistory(nextHistory);
+    setRobotTaskMessage("Lane benchmark snapshot saved.");
+  }, [buildLaneBenchmarkSnapshot, laneBenchmarkHistory, persistLaneBenchmarkHistory]);
+
+  const clearLaneBenchmarkHistory = useCallback(() => {
+    persistLaneBenchmarkHistory([]);
+    setRobotTaskMessage("Lane benchmark history cleared.");
+  }, [persistLaneBenchmarkHistory]);
 
   useEffect(() => {
     let cachedSettings: Partial<{
@@ -686,6 +751,30 @@ export default function Home() {
     roiTopWidth,
     roiTopY,
   ]);
+
+  useEffect(() => {
+    let cachedHistory: LaneBenchmarkSnapshot[] | null = null;
+
+    try {
+      const cached = window.localStorage.getItem(laneBenchmarkStorageKey);
+      if (!cached) {
+        return;
+      }
+
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) {
+        cachedHistory = parsed.slice(0, 12) as LaneBenchmarkSnapshot[];
+      }
+    } catch {
+      window.localStorage.removeItem(laneBenchmarkStorageKey);
+    } finally {
+      queueMicrotask(() => {
+        if (cachedHistory) {
+          setLaneBenchmarkHistory(cachedHistory);
+        }
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const manualCalibration = createManualRoadCalibration(roiTopY, roiTopCenterX, roiTopWidth, roiBottomY, roiBottomWidth);
@@ -1948,7 +2037,35 @@ export default function Home() {
               <button className="secondary-button compact-button" type="button" onClick={copyLaneBenchmarkSnapshot}>
                 Copy Metrics
               </button>
+              <button className="secondary-button compact-button" type="button" onClick={saveLaneBenchmarkSnapshot}>
+                Save Metrics
+              </button>
+              <button
+                className="secondary-button compact-button"
+                type="button"
+                onClick={clearLaneBenchmarkHistory}
+                disabled={laneBenchmarkHistory.length === 0}
+              >
+                Clear Saved
+              </button>
             </div>
+            {laneBenchmarkHistory.length > 0 ? (
+              <div className="benchmark-history" aria-label="Lane benchmark history">
+                <div className="benchmark-history-heading">
+                  <span>Saved Benchmarks</span>
+                  <strong>{laneBenchmarkHistory.length}</strong>
+                </div>
+                {laneBenchmarkHistory.slice(0, 4).map((snapshot) => (
+                  <div className="benchmark-row" key={snapshot.capturedAt}>
+                    <span>{formatBenchmarkTime(snapshot.capturedAt)}</span>
+                    <strong>
+                      {Math.round(snapshot.metrics.laneConfidence * 100)}% /{" "}
+                      {formatDuration(snapshot.metrics.averageLaneMs)} / D{snapshot.metrics.laneDropCount}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
           </section>
         </aside>
@@ -4062,6 +4179,19 @@ function formatDuration(milliseconds: number) {
   }
 
   return `${(milliseconds / 1000).toFixed(2)} s`;
+}
+
+function formatBenchmarkTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function pushRollingSample(samples: number[], value: number, maxSamples: number) {
