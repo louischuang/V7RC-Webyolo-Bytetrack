@@ -21,7 +21,6 @@ import {
   type V7rcTransportStatus,
 } from "./lib/v7rc-transport";
 import { type DetectableSource, type Detection, YoloDetector } from "./lib/yolo";
-import { LaneSegmentationModel } from "./lib/lane-segmentation";
 
 type CameraState = "idle" | "requesting" | "ready" | "streaming" | "error";
 type SourceMode = "camera" | "mjpg" | "rtsp" | "youtube";
@@ -72,7 +71,6 @@ type RobotMode = "suggestion" | "armed";
 type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
 type LlmDevice = "wasm" | "webgpu";
-type LanePerceptionMode = "classical" | "yolop" | "segmentation";
 type NormalizedPoint = { x: number; y: number };
 type RoadCalibration = {
   bottomLeftX: number;
@@ -126,11 +124,6 @@ type LaneImageStats = {
   contrastBoost: number;
   gammaGain: number;
 };
-type LanePerceptionResult = {
-  detection: LaneDetection;
-  modelUsed: boolean;
-  segmentationMs: number;
-};
 type LaneBenchmarkSnapshot = {
   capturedAt: string;
   source: {
@@ -142,8 +135,6 @@ type LaneBenchmarkSnapshot = {
     debugArtifacts: boolean;
     headingFilter: boolean;
     inferMissingLane: boolean;
-    laneModelUsed: boolean;
-    lanePerceptionMode: LanePerceptionMode;
     robustScoring: boolean;
   };
   controls: {
@@ -163,8 +154,6 @@ type LaneBenchmarkSnapshot = {
     laneDropCount: number;
     laneMissedMs: number;
     laneProcessingMs: number;
-    segmentationAverageMs: number;
-    segmentationInferenceMs: number;
     roiConfidence: number;
   };
   result: {
@@ -203,12 +192,6 @@ const runtimeDefaults = {
   llmFrameMaxSide: Number(process.env.NEXT_PUBLIC_LLM_FRAME_MAX_SIDE ?? 448),
   llmFrameJpegQuality: Number(process.env.NEXT_PUBLIC_LLM_FRAME_JPEG_QUALITY ?? 0.72),
   streamGatewayUrl: process.env.NEXT_PUBLIC_STREAM_GATEWAY_URL ?? "http://localhost:3010",
-  laneModelUrl: process.env.NEXT_PUBLIC_LANE_MODEL_URL ?? "",
-  laneModelInputSize: Number(process.env.NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE ?? 224),
-  laneModelProvider: process.env.NEXT_PUBLIC_LANE_MODEL_PROVIDER ?? "webgpu,wasm",
-  laneModelFrameInterval: Number(process.env.NEXT_PUBLIC_LANE_MODEL_FRAME_INTERVAL ?? 1),
-  laneModelTargetChannel: Number(process.env.NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL ?? 0),
-  laneModelThreshold: Number(process.env.NEXT_PUBLIC_LANE_MODEL_THRESHOLD ?? 0.5),
 };
 
 const legacyDefaultSystemPrompt =
@@ -224,7 +207,7 @@ const defaultFixedPrompt =
   "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
-const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v2";
+const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
 const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
 const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "camera", label: "Camera" },
@@ -241,18 +224,13 @@ const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
   { id: "autopilot", label: "自動駕駛" },
   { id: "mission", label: "解任務" },
 ];
-const lanePerceptionModes: Array<{ detail: string; id: LanePerceptionMode; label: string }> = [
-  { detail: "Current browser lane detector baseline.", id: "classical", label: "Classical" },
-  { detail: "YOLOP/YOLOPv2-style multitask adapter benchmark.", id: "yolop", label: "YOLOP" },
-  { detail: "Dedicated road/lane segmentation adapter benchmark.", id: "segmentation", label: "ONNX Seg" },
-];
 const robotCommandIntervalMs = 30;
 const laneDetectionIntervalMs = 140;
-const birdViewDefaultTopY = 0.52;
+const birdViewDefaultTopY = 0.65;
 const birdViewDefaultTopCenterX = 0.5;
-const birdViewDefaultTopWidth = 0.34;
-const birdViewDefaultBottomY = 0.97;
-const birdViewDefaultBottomWidth = 0.98;
+const birdViewDefaultTopWidth = 0.16;
+const birdViewDefaultBottomY = 0.93;
+const birdViewDefaultBottomWidth = 0.9;
 const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
@@ -261,7 +239,7 @@ const laneDetectionDefaultFilterArtifacts = true;
 const laneDetectionDefaultFilterHeading = true;
 const laneDetectionDefaultInferMissingLane = true;
 const laneDetectionDefaultUseRobustScoring = true;
-const laneDetectionDefaultJoinGapY = 0.28;
+const laneDetectionDefaultJoinGapY = 0.16;
 const laneDetectionDefaultMinPixelScore = 18;
 const laneDetectionDefaultSmoothing = 0.62;
 
@@ -310,9 +288,6 @@ export default function Home() {
   const runInferenceRoundRef = useRef<() => Promise<void>>(async () => {});
   const sourceDeepLinkAppliedRef = useRef(false);
   const laneProcessingSamplesRef = useRef<number[]>([]);
-  const laneSegmentationSamplesRef = useRef<number[]>([]);
-  const laneDetectingRef = useRef(false);
-  const laneSegmentationModelRef = useRef<LaneSegmentationModel | null>(null);
   const laneMissedSinceRef = useRef<number | null>(null);
   const laneWasUsableRef = useRef(false);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -380,21 +355,12 @@ export default function Home() {
   const [filterLaneHeading, setFilterLaneHeading] = useState(laneDetectionDefaultFilterHeading);
   const [inferMissingLane, setInferMissingLane] = useState(laneDetectionDefaultInferMissingLane);
   const [useRobustLaneScoring, setUseRobustLaneScoring] = useState(laneDetectionDefaultUseRobustScoring);
-  const [lanePerceptionMode, setLanePerceptionMode] = useState<LanePerceptionMode>("classical");
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
   const [roiConfidence, setRoiConfidence] = useState(0);
   const [laneProcessingMs, setLaneProcessingMs] = useState(0);
   const [laneAverageMs, setLaneAverageMs] = useState(0);
-  const [laneSegmentationMs, setLaneSegmentationMs] = useState(0);
-  const [laneSegmentationAverageMs, setLaneSegmentationAverageMs] = useState(0);
-  const [laneModelStatus, setLaneModelStatus] = useState<RuntimeStatus>({
-    detail: runtimeDefaults.laneModelUrl ? `Loading ${runtimeDefaults.laneModelUrl}` : "Adapter fallback; no ONNX lane model configured.",
-    label: "Lane Model",
-    state: runtimeDefaults.laneModelUrl ? "loading" : "idle",
-  });
-  const [laneModelUsed, setLaneModelUsed] = useState(false);
   const [laneDropCount, setLaneDropCount] = useState(0);
   const [laneMissedMs, setLaneMissedMs] = useState(0);
   const [laneBenchmarkHistory, setLaneBenchmarkHistory] = useState<LaneBenchmarkSnapshot[]>([]);
@@ -439,9 +405,7 @@ export default function Home() {
     if (robotTaskMode === "autopilot") {
       const offset = laneDetectionRef.current?.egoLaneCenterOffset;
       const laneText = typeof offset === "number" ? ` Ego lane offset ${formatSignedNumber(offset)}.` : " Ego lane pending.";
-      const perceptionText = formatLanePerceptionMode(lanePerceptionMode);
       const modeText = [
-        perceptionText,
         useRobustLaneScoring ? "robust" : "legacy",
         filterLaneArtifacts ? "artifact-filter" : "no-artifact-filter",
         filterLaneHeading ? "heading-filter" : "no-heading-filter",
@@ -451,16 +415,7 @@ export default function Home() {
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
-  }, [
-    filterLaneArtifacts,
-    filterLaneHeading,
-    inferMissingLane,
-    laneConfidence,
-    lanePerceptionMode,
-    robotTaskMode,
-    roiConfidence,
-    useRobustLaneScoring,
-  ]);
+  }, [filterLaneArtifacts, filterLaneHeading, inferMissingLane, laneConfidence, robotTaskMode, roiConfidence, useRobustLaneScoring]);
   const selectedCamera = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -520,14 +475,11 @@ export default function Home() {
   const resetLaneBenchmarkMetrics = useCallback(() => {
     laneMissedSinceRef.current = null;
     laneProcessingSamplesRef.current = [];
-    laneSegmentationSamplesRef.current = [];
     laneWasUsableRef.current = false;
     setLaneAverageMs(0);
     setLaneDropCount(0);
     setLaneMissedMs(0);
     setLaneProcessingMs(0);
-    setLaneSegmentationAverageMs(0);
-    setLaneSegmentationMs(0);
   }, []);
 
   const buildLaneBenchmarkSnapshot = useCallback((): LaneBenchmarkSnapshot => {
@@ -543,8 +495,6 @@ export default function Home() {
         debugArtifacts: showLaneDebugArtifacts,
         headingFilter: filterLaneHeading,
         inferMissingLane,
-        lanePerceptionMode,
-        laneModelUsed,
         robustScoring: useRobustLaneScoring,
       },
       controls: {
@@ -564,8 +514,6 @@ export default function Home() {
         laneDropCount,
         laneMissedMs,
         laneProcessingMs,
-        segmentationAverageMs: laneSegmentationAverageMs,
-        segmentationInferenceMs: laneSegmentationMs,
         roiConfidence,
       },
       result: {
@@ -588,11 +536,7 @@ export default function Home() {
     laneJoinGapY,
     laneMinPixelScore,
     laneMissedMs,
-    laneModelUsed,
-    lanePerceptionMode,
     laneProcessingMs,
-    laneSegmentationAverageMs,
-    laneSegmentationMs,
     laneSmoothing,
     roiBottomWidth,
     roiBottomY,
@@ -698,7 +642,6 @@ export default function Home() {
       filterLaneArtifacts: boolean;
       filterLaneHeading: boolean;
       inferMissingLane: boolean;
-      lanePerceptionMode: LanePerceptionMode;
       laneJoinGapY: number;
       laneMinPixelScore: number;
       laneSmoothing: number;
@@ -732,15 +675,8 @@ export default function Home() {
         if (typeof cachedSettings?.inferMissingLane === "boolean") {
           setInferMissingLane(cachedSettings.inferMissingLane);
         }
-        if (
-          cachedSettings?.lanePerceptionMode === "classical" ||
-          cachedSettings?.lanePerceptionMode === "yolop" ||
-          cachedSettings?.lanePerceptionMode === "segmentation"
-        ) {
-          setLanePerceptionMode(cachedSettings.lanePerceptionMode);
-        }
         if (typeof cachedSettings?.laneJoinGapY === "number") {
-          setLaneJoinGapY(clamp(cachedSettings.laneJoinGapY, 0.04, 0.5));
+          setLaneJoinGapY(clamp(cachedSettings.laneJoinGapY, 0.04, 0.25));
         }
         if (typeof cachedSettings?.laneMinPixelScore === "number") {
           setLaneMinPixelScore(clamp(cachedSettings.laneMinPixelScore, 8, 42));
@@ -755,7 +691,7 @@ export default function Home() {
           setUseRobustLaneScoring(cachedSettings.useRobustLaneScoring);
         }
         if (typeof cachedSettings?.roiBottomWidth === "number") {
-          setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 1));
+          setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
         }
         if (typeof cachedSettings?.roiBottomY === "number") {
           setRoiBottomY(clamp(cachedSettings.roiBottomY, 0.78, 0.99));
@@ -764,10 +700,10 @@ export default function Home() {
           setRoiTopCenterX(clamp(cachedSettings.roiTopCenterX, 0.35, 0.65));
         }
         if (typeof cachedSettings?.roiTopWidth === "number") {
-          setRoiTopWidth(clamp(cachedSettings.roiTopWidth, 0.08, 0.62));
+          setRoiTopWidth(clamp(cachedSettings.roiTopWidth, 0.08, 0.42));
         }
         if (typeof cachedSettings?.roiTopY === "number") {
-          setRoiTopY(clamp(cachedSettings.roiTopY, 0.45, 0.72));
+          setRoiTopY(clamp(cachedSettings.roiTopY, 0.58, 0.72));
         }
         setBirdViewSettingsHydrated(true);
       });
@@ -786,7 +722,6 @@ export default function Home() {
         filterLaneArtifacts,
         filterLaneHeading,
         inferMissingLane,
-        lanePerceptionMode,
         laneJoinGapY,
         laneMinPixelScore,
         laneSmoothing,
@@ -805,7 +740,6 @@ export default function Home() {
     filterLaneArtifacts,
     filterLaneHeading,
     inferMissingLane,
-    lanePerceptionMode,
     laneJoinGapY,
     laneMinPixelScore,
     laneSmoothing,
@@ -849,66 +783,6 @@ export default function Home() {
       ? { ...laneDetectionRef.current, road: manualCalibration, roiConfidence: 0 }
       : null;
   }, [roiBottomWidth, roiBottomY, roiTopCenterX, roiTopWidth, roiTopY]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadLaneModel = async () => {
-      if (!runtimeDefaults.laneModelUrl) {
-        laneSegmentationModelRef.current = null;
-        setLaneModelStatus({
-          detail: "Adapter fallback; no ONNX lane model configured.",
-          label: "Lane Model",
-          state: "idle",
-        });
-        return;
-      }
-
-      setLaneModelStatus({
-        detail: `Loading ${runtimeDefaults.laneModelUrl}`,
-        label: "Lane Model",
-        state: "loading",
-      });
-
-      try {
-        const model = await LaneSegmentationModel.create({
-          inputSize: runtimeDefaults.laneModelInputSize,
-          modelUrl: runtimeDefaults.laneModelUrl,
-          provider: runtimeDefaults.laneModelProvider,
-          targetChannel: runtimeDefaults.laneModelTargetChannel,
-          threshold: runtimeDefaults.laneModelThreshold,
-        });
-
-        if (cancelled) {
-          return;
-        }
-
-        laneSegmentationModelRef.current = model;
-        setLaneModelStatus({
-          detail: `${model.backend.toUpperCase()} / ${runtimeDefaults.laneModelUrl}`,
-          label: "Lane Model",
-          state: "ready",
-        });
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        laneSegmentationModelRef.current = null;
-        setLaneModelStatus({
-          detail: error instanceof Error ? error.message : "Lane model failed to load.",
-          label: "Lane Model",
-          state: "error",
-        });
-      }
-    };
-
-    void loadLaneModel();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const stopCamera = useCallback(() => {
     if (gatewayStreamIdRef.current) {
@@ -1727,79 +1601,42 @@ export default function Home() {
 
     const detectLaneCandidates = () => {
       const now = performance.now();
-      if (now - lastDetectionAt >= laneDetectionIntervalMs && !laneDetectingRef.current) {
-        laneDetectingRef.current = true;
-        lastDetectionAt = now;
+      if (now - lastDetectionAt >= laneDetectionIntervalMs) {
         const source = getActiveSource(sourceSurface, videoRef.current, imageRef.current);
         if (source && isSourceReady(source)) {
           laneDetectionCanvasRef.current ??= document.createElement("canvas");
-          void (async () => {
-            try {
-              const laneStart = performance.now();
-              const perception = await runLanePerception(
-                source,
-                laneDetectionCanvasRef.current!,
-                roadCalibrationRef.current,
-                {
-                  laneModel: laneSegmentationModelRef.current,
-                  mode: lanePerceptionMode,
-                  options: {
-                    filterArtifacts: filterLaneArtifacts,
-                    filterHeading: filterLaneHeading,
-                    inferMissingLane,
-                    joinGapY: laneJoinGapY,
-                    minPixelScore: laneMinPixelScore,
-                    useRobustScoring: useRobustLaneScoring,
-                  },
-                },
-              );
-              const nextDetection = smoothLaneDetection(
-                perception.detection,
-                laneDetectionRef.current,
-                roadCalibrationRef.current,
-                laneSmoothing,
-              );
-              const doneAt = performance.now();
-              const laneElapsed = doneAt - laneStart;
-              const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
-              const nextSegmentationAverage = pushRollingSample(
-                laneSegmentationSamplesRef.current,
-                perception.segmentationMs,
-                20,
-              );
-              const laneUsable = isLaneDetectionUsable(nextDetection);
-              if (laneUsable) {
-                laneMissedSinceRef.current = null;
-              } else {
-                if (laneWasUsableRef.current) {
-                  setLaneDropCount((count) => count + 1);
-                }
-                laneMissedSinceRef.current ??= doneAt;
-              }
-              laneWasUsableRef.current = laneUsable;
-              laneDetectionRef.current = nextDetection;
-
-              if (doneAt - lastStateUpdateAt >= 500) {
-                lastStateUpdateAt = doneAt;
-                setLaneConfidence(nextDetection.confidence);
-                setLaneAverageMs(nextLaneAverage);
-                setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : doneAt - laneMissedSinceRef.current);
-                setLaneProcessingMs(laneElapsed);
-                setLaneSegmentationAverageMs(nextSegmentationAverage);
-                setLaneSegmentationMs(perception.segmentationMs);
-                setLaneModelUsed(perception.modelUsed);
-                setRoiConfidence(nextDetection.roiConfidence);
-              }
-            } catch (error) {
-              setLaneModelStatus({
-                detail: error instanceof Error ? error.message : "Lane perception failed.",
-                label: "Lane Model",
-                state: "error",
-              });
-            } finally {
-              laneDetectingRef.current = false;
+          const laneStart = performance.now();
+          const detection = detectLaneLinesFromSource(source, laneDetectionCanvasRef.current, roadCalibrationRef.current, {
+            filterArtifacts: filterLaneArtifacts,
+            filterHeading: filterLaneHeading,
+            inferMissingLane,
+            joinGapY: laneJoinGapY,
+            minPixelScore: laneMinPixelScore,
+            useRobustScoring: useRobustLaneScoring,
+          });
+          const nextDetection = smoothLaneDetection(detection, laneDetectionRef.current, roadCalibrationRef.current, laneSmoothing);
+          const laneElapsed = performance.now() - laneStart;
+          const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
+          const laneUsable = isLaneDetectionUsable(nextDetection);
+          if (laneUsable) {
+            laneMissedSinceRef.current = null;
+          } else {
+            if (laneWasUsableRef.current) {
+              setLaneDropCount((count) => count + 1);
             }
-          })();
+            laneMissedSinceRef.current ??= now;
+          }
+          laneWasUsableRef.current = laneUsable;
+          laneDetectionRef.current = nextDetection;
+
+          if (now - lastStateUpdateAt >= 500) {
+            lastStateUpdateAt = now;
+            setLaneConfidence(nextDetection.confidence);
+            setLaneAverageMs(nextLaneAverage);
+            setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
+            setLaneProcessingMs(laneElapsed);
+            setRoiConfidence(nextDetection.roiConfidence);
+          }
         } else {
           laneDetectionRef.current = null;
           if (laneWasUsableRef.current) {
@@ -1813,13 +1650,11 @@ export default function Home() {
             setLaneAverageMs(0);
             setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(0);
-            setLaneSegmentationAverageMs(0);
-            setLaneSegmentationMs(0);
-            setLaneModelUsed(false);
             setRoiConfidence(0);
           }
-          laneDetectingRef.current = false;
         }
+
+        lastDetectionAt = now;
       }
 
       animationFrame = requestAnimationFrame(detectLaneCandidates);
@@ -1833,7 +1668,6 @@ export default function Home() {
     inferMissingLane,
     laneJoinGapY,
     laneMinPixelScore,
-    lanePerceptionMode,
     laneSmoothing,
     roiBottomWidth,
     roiBottomY,
@@ -1978,20 +1812,8 @@ export default function Home() {
                 <strong>{formatDuration(laneProcessingMs)}</strong>
               </div>
               <div>
-                <span>Seg Time</span>
-                <strong>{formatDuration(laneSegmentationMs)}</strong>
-              </div>
-              <div>
-                <span>Lane Model</span>
-                <strong>{laneModelUsed ? "ONNX" : "Fallback"}</strong>
-              </div>
-              <div>
                 <span>Avg Lane</span>
                 <strong>{formatDuration(laneAverageMs)}</strong>
-              </div>
-              <div>
-                <span>Avg Seg</span>
-                <strong>{formatDuration(laneSegmentationAverageMs)}</strong>
               </div>
               <div>
                 <span>Missed Lane</span>
@@ -2020,43 +1842,6 @@ export default function Home() {
               />
             </div>
             <div className="roi-controls" aria-label="Bird's-eye ROI controls">
-              <div className="perception-mode-control">
-                <span>Perception</span>
-                <div className="segmented-control compact-segmented-control">
-                  {lanePerceptionModes.map((mode) => (
-                    <button
-                      className={lanePerceptionMode === mode.id ? "active" : ""}
-                      key={mode.id}
-                      type="button"
-                      onClick={() => {
-                        setLanePerceptionMode(mode.id);
-                        resetLaneBenchmarkMetrics();
-                        setRoiConfidence(0);
-                      }}
-                      title={mode.detail}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-                <strong>{formatLanePerceptionMode(lanePerceptionMode)}</strong>
-              </div>
-              <div className="perception-benchmark">
-                <span>Model URL</span>
-                <strong>{runtimeDefaults.laneModelUrl ? "Configured" : "Adapter fallback"}</strong>
-                <span>Model State</span>
-                <strong>{laneModelStatus.state.toUpperCase()}</strong>
-                <span>Input / Threshold</span>
-                <strong>
-                  {runtimeDefaults.laneModelInputSize}px / {runtimeDefaults.laneModelThreshold.toFixed(2)}
-                </strong>
-                <span>Target Channel</span>
-                <strong>{runtimeDefaults.laneModelTargetChannel}</strong>
-                <span>Provider / Interval</span>
-                <strong>
-                  {runtimeDefaults.laneModelProvider} / {runtimeDefaults.laneModelFrameInterval}
-                </strong>
-              </div>
               <label>
                 <span>View Height</span>
                 <input
@@ -2073,7 +1858,7 @@ export default function Home() {
                 <span>Top Y</span>
                 <input
                   type="range"
-                  min="0.45"
+                  min="0.58"
                   max="0.72"
                   step="0.01"
                   value={roiTopY}
@@ -2104,7 +1889,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.08"
-                  max="0.62"
+                  max="0.42"
                   step="0.01"
                   value={roiTopWidth}
                   onChange={(event) => {
@@ -2119,7 +1904,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.72"
-                  max="1"
+                  max="0.98"
                   step="0.01"
                   value={roiBottomWidth}
                   onChange={(event) => {
@@ -2164,7 +1949,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.04"
-                  max="0.5"
+                  max="0.25"
                   step="0.01"
                   value={laneJoinGapY}
                   onChange={(event) => {
@@ -2275,8 +2060,7 @@ export default function Home() {
                     <span>{formatBenchmarkTime(snapshot.capturedAt)}</span>
                     <strong>
                       {Math.round(snapshot.metrics.laneConfidence * 100)}% /{" "}
-                      {formatDuration(snapshot.metrics.averageLaneMs)} / S
-                      {formatDuration(snapshot.metrics.segmentationAverageMs ?? 0)} / D{snapshot.metrics.laneDropCount}
+                      {formatDuration(snapshot.metrics.averageLaneMs)} / D{snapshot.metrics.laneDropCount}
                     </strong>
                   </div>
                 ))}
@@ -3419,146 +3203,6 @@ function drawLaneBands(
   });
 }
 
-function runLanePerception(
-  source: DetectableSource,
-  canvas: HTMLCanvasElement,
-  roadCalibration: RoadCalibration,
-  config: {
-    laneModel: LaneSegmentationModel | null;
-    mode: LanePerceptionMode;
-    options: LaneDetectionOptions;
-  },
-): Promise<LanePerceptionResult> {
-  if (config.mode === "classical") {
-    return Promise.resolve({
-      detection: detectLaneLinesFromSource(source, canvas, roadCalibration, config.options),
-      modelUsed: false,
-      segmentationMs: 0,
-    });
-  }
-
-  const segmentationStart = performance.now();
-  const perception = detectLaneLinesFromSegmentationAdapter(
-    source,
-    canvas,
-    roadCalibration,
-    config.mode,
-    config.options,
-    config.laneModel,
-  );
-
-  return perception.then((result) => ({
-    ...result,
-    segmentationMs: performance.now() - segmentationStart,
-  }));
-}
-
-async function detectLaneLinesFromSegmentationAdapter(
-  source: DetectableSource,
-  canvas: HTMLCanvasElement,
-  roadCalibration: RoadCalibration,
-  mode: Exclude<LanePerceptionMode, "classical">,
-  options: LaneDetectionOptions,
-  laneModel: LaneSegmentationModel | null,
-): Promise<Omit<LanePerceptionResult, "segmentationMs">> {
-  const width = runtimeDefaults.laneModelInputSize;
-  const height = Math.round(runtimeDefaults.laneModelInputSize * 0.7);
-  const birdFrame = renderBirdViewFrame(source, width, height, roadCalibration);
-  if (laneModel) {
-    const result = await laneModel.segment(birdFrame);
-    return {
-      detection: createLaneDetectionFromBirdPaths(
-        result.paths,
-        roadCalibration,
-        result.confidence,
-        [],
-        null,
-        options.inferMissingLane,
-      ),
-      modelUsed: true,
-    };
-  }
-
-  canvas.width = birdFrame.width;
-  canvas.height = birdFrame.height;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) {
-    return {
-      detection: emptyLaneDetection(roadCalibration),
-      modelUsed: false,
-    };
-  }
-
-  context.drawImage(birdFrame, 0, 0);
-  const image = context.getImageData(0, 0, width, height);
-  const segmentationOptions: LaneDetectionOptions = {
-    ...options,
-    filterArtifacts: true,
-    filterHeading: true,
-    minPixelScore:
-      mode === "yolop"
-        ? Math.max(8, options.minPixelScore * 0.68)
-        : Math.max(9, options.minPixelScore * runtimeDefaults.laneModelThreshold),
-    useRobustScoring: true,
-  };
-  const imageStats = createLaneImageStats(image.data, width, height, segmentationOptions.minPixelScore);
-  const birdPointsByColumn = new Map<number, NormalizedPoint[]>();
-  const scanStartY = Math.floor(height * 0.04);
-  const scanEndY = Math.floor(height * 0.98);
-  const columnCount = mode === "yolop" ? 18 : 16;
-  let maskHits = 0;
-
-  for (let y = scanStartY; y <= scanEndY; y += 2) {
-    for (let column = 0; column < columnCount; column += 1) {
-      const startX = Math.floor((column / columnCount) * width);
-      const endX = Math.min(width - 1, Math.ceil(((column + 1) / columnCount) * width));
-      const candidate = findLanePixelCandidate(
-        image.data,
-        width,
-        height,
-        y,
-        startX,
-        endX,
-        segmentationOptions,
-        imageStats,
-      );
-
-      if (!candidate) {
-        continue;
-      }
-
-      maskHits += 1;
-      const bucket = Math.max(0, Math.min(columnCount - 1, Math.floor((candidate.x / width) * columnCount)));
-      const points = birdPointsByColumn.get(bucket) ?? [];
-      points.push({ x: candidate.x / width, y: y / height });
-      birdPointsByColumn.set(bucket, points);
-    }
-  }
-
-  const detectedBirdPaths = mergeNearbyBirdLanePaths(
-    [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, segmentationOptions)),
-    segmentationOptions.joinGapY,
-  );
-  const pathFilterResult = filterOverheadCenterArtifacts(filterLanePathsByHeading(detectedBirdPaths));
-  const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
-  const birdPaths = extendBirdLanePaths(pathFilterResult.accepted);
-  const rowCount = Math.max(1, Math.floor((scanEndY - scanStartY) / 2));
-  const densityScale = mode === "yolop" ? 3.2 : 2.8;
-  const confidence = clamp01(Math.min(maskHits, rowCount * densityScale) / (rowCount * densityScale));
-
-  return {
-    detection: createLaneDetectionFromBirdPaths(
-      birdPaths,
-      roadCalibration,
-      confidence,
-      rejectedArtifactPaths,
-      null,
-      segmentationOptions.inferMissingLane,
-    ),
-    modelUsed: false,
-  };
-}
-
 function detectLaneLinesFromSource(
   source: DetectableSource,
   canvas: HTMLCanvasElement,
@@ -3604,7 +3248,6 @@ function detectLaneLinesFromSource(
 
   const detectedBirdPaths = mergeNearbyBirdLanePaths(
     [...birdPointsByColumn.values()].flatMap((points) => fitLanePaths(points, options)),
-    options.joinGapY,
   );
   const headingFilteredBirdPaths = options.filterHeading
     ? filterLanePathsByHeading(detectedBirdPaths)
@@ -3924,7 +3567,7 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
   const rawSegments: NormalizedPoint[][] = [];
   let currentSegment: NormalizedPoint[] = [];
   const maxGapY = options.joinGapY;
-  const maxGapX = clamp(0.08 + options.joinGapY * 0.18, 0.09, 0.16);
+  const maxGapX = 0.09;
 
   for (const point of sorted) {
     const previous = currentSegment.at(-1);
@@ -3938,11 +3581,11 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
     rawSegments.push(currentSegment);
   }
 
-  const bucketSize = 3;
+  const bucketSize = 4;
   const smoothedSegments: NormalizedPoint[][] = [];
 
   for (const segment of rawSegments) {
-    if (segment.length < 4) {
+    if (segment.length < 6) {
       continue;
     }
 
@@ -3979,72 +3622,10 @@ function fitLanePaths(points: NormalizedPoint[], options: LaneDetectionOptions):
   return smoothedSegments;
 }
 
-function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][], joinGapY = laneDetectionDefaultJoinGapY) {
-  const sortedPaths = paths
+function mergeNearbyBirdLanePaths(paths: NormalizedPoint[][]) {
+  return paths
     .filter((path) => path.length >= 2)
-    .map((path) => [...path].sort((a, b) => a.y - b.y))
     .sort((a, b) => pathAverageX(a) - pathAverageX(b));
-  const merged: NormalizedPoint[][] = [];
-
-  for (const path of sortedPaths) {
-    const targetIndex = merged.findIndex((candidate) => shouldMergeDashedLanePath(candidate, path, joinGapY));
-    if (targetIndex < 0) {
-      merged.push(path);
-      continue;
-    }
-
-    merged[targetIndex] = smoothMergedLanePath([...merged[targetIndex], ...path]);
-  }
-
-  return merged.sort((a, b) => pathAverageX(a) - pathAverageX(b));
-}
-
-function shouldMergeDashedLanePath(a: NormalizedPoint[], b: NormalizedPoint[], joinGapY: number) {
-  const rangeA = pathYRange(a);
-  const rangeB = pathYRange(b);
-  const verticalGap = Math.max(0, Math.max(rangeA.min, rangeB.min) - Math.min(rangeA.max, rangeB.max));
-  if (verticalGap > joinGapY * 1.8) {
-    return false;
-  }
-
-  const sampleY = clamp01((Math.max(rangeA.min, rangeB.min) + Math.min(rangeA.max, rangeB.max)) / 2);
-  const fallbackY = clamp01((rangeA.max + rangeA.min + rangeB.max + rangeB.min) / 4);
-  const y = Number.isFinite(sampleY) ? sampleY : fallbackY;
-  const xDistance = Math.abs(pathXAtY(a, y) - pathXAtY(b, y));
-  if (xDistance > 0.105) {
-    return false;
-  }
-
-  const headingA = pathXAtY(a, 0.92) - pathXAtY(a, 0.28);
-  const headingB = pathXAtY(b, 0.92) - pathXAtY(b, 0.28);
-  return Math.abs(headingA - headingB) < 0.18;
-}
-
-function smoothMergedLanePath(path: NormalizedPoint[]) {
-  const sorted = [...path].sort((a, b) => a.y - b.y);
-  const bucketCount = Math.max(3, Math.min(18, Math.ceil(sorted.length / 3)));
-  const range = pathYRange(sorted);
-  const points: NormalizedPoint[] = [];
-
-  for (let bucketIndex = 0; bucketIndex < bucketCount; bucketIndex += 1) {
-    const y0 = range.min + ((range.max - range.min) * bucketIndex) / bucketCount;
-    const y1 = range.min + ((range.max - range.min) * (bucketIndex + 1)) / bucketCount;
-    const bucket = sorted.filter((point) => point.y >= y0 && point.y <= y1);
-    if (bucket.length === 0) {
-      continue;
-    }
-
-    const average = bucket.reduce(
-      (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
-      { x: 0, y: 0 },
-    );
-    points.push({
-      x: clamp01(average.x / bucket.length),
-      y: clamp01(average.y / bucket.length),
-    });
-  }
-
-  return points.length >= 2 ? points : sorted;
 }
 
 function filterLanePathsByHeading(paths: NormalizedPoint[][]) {
@@ -4464,11 +4045,11 @@ function createManualRoadCalibration(
   bottomY: number,
   bottomWidth: number,
 ): RoadCalibration {
-  const safeTopY = clamp(topY, 0.42, 0.8);
+  const safeTopY = clamp(topY, 0.5, 0.8);
   const safeTopCenterX = clamp(topCenterX, 0.25, 0.75);
-  const safeTopWidth = clamp(topWidth, 0.06, 0.66);
+  const safeTopWidth = clamp(topWidth, 0.06, 0.48);
   const safeBottomY = clamp(bottomY, safeTopY + 0.08, 0.99);
-  const safeBottomWidth = clamp(bottomWidth, 0.62, 1);
+  const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
 
   return {
     bottomLeftX: (1 - safeBottomWidth) / 2,
@@ -4598,18 +4179,6 @@ function formatDuration(milliseconds: number) {
   }
 
   return `${(milliseconds / 1000).toFixed(2)} s`;
-}
-
-function formatLanePerceptionMode(mode: LanePerceptionMode) {
-  if (mode === "yolop") {
-    return "YOLOP / YOLOPv2";
-  }
-
-  if (mode === "segmentation") {
-    return "ONNX segmentation";
-  }
-
-  return "YOLO11n + classical lane";
 }
 
 function formatBenchmarkTime(value: string) {

@@ -353,20 +353,17 @@ Next planning target:
 
 ## Phase 16A - Lane Perception Model Benchmark
 
-- [x] Add a lane perception mode selector: `YOLO11n + classical lane`, `YOLOP/YOLOPv2`, and `ONNX segmentation`.
-- [x] Keep YOLO11n object detection as the baseline safety detector while evaluating alternate road/lane perception models.
+- [ ] Add a lane perception mode selector: `YOLO11n + classical lane`, `YOLOP/YOLOPv2`, and `ONNX segmentation`.
+- [ ] Keep YOLO11n object detection as the baseline safety detector while evaluating alternate road/lane perception models.
 - [ ] Research browser-compatible YOLOP/YOLOPv2-style ONNX artifacts and document input/output tensor shapes.
-- [x] Add adapter interface for multitask outputs: detections, drivable-area mask, and lane-line mask.
-- [x] Research lightweight ONNX road/lane segmentation candidates suitable for Chrome WebGPU/WASM.
-- [x] Add adapter interface for segmentation mask to bird-view lane center conversion.
-- [x] Add model config fields for lane model URL, input size, runtime provider, threshold, and frame interval.
-- [x] Add browser ONNX lane segmentation loader and generic mask-to-path decoder.
-- [x] Download SegFormer-B0 Cityscapes quantized ONNX road segmentation model into the host `./models` Docker volume.
+- [ ] Add adapter interface for multitask outputs: detections, drivable-area mask, and lane-line mask.
+- [ ] Research lightweight ONNX road/lane segmentation candidates suitable for Chrome WebGPU/WASM.
+- [ ] Add adapter interface for segmentation mask to bird-view lane center conversion.
+- [ ] Add model config fields for lane model URL, input size, runtime provider, threshold, and frame interval.
 - [ ] Add benchmark clips/presets for clear highway, tunnel, dusk, rainy/low-contrast, glare, and worn-lane scenes.
 - [ ] Record metrics: display FPS, YOLO inference time, lane preprocessing time, lane fitting time, segmentation inference time, memory growth, and missed-lane duration.
 - [x] Display current lane detection processing time for algorithm toggle comparisons.
 - [x] Display rolling average lane time and current missed-lane duration.
-- [x] Display segmentation adapter/model inference time and rolling average.
 - [x] Track lane drop count and add metric reset control.
 - [x] Add copyable lane benchmark snapshot for algorithm comparison notes.
 - [x] Add local lane benchmark history with saved snapshots and clear control.

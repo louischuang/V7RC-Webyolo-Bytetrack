@@ -12,9 +12,6 @@ public/models/
     yolo11n.onnx
   gemma4-e2b-it-onnx/
     ...
-  lane/
-    segformer-b0-cityscapes/
-      model_quantized.onnx
 ```
 
 Use this layout for production host storage:
@@ -25,9 +22,6 @@ models/
     yolo11n.onnx
   gemma4-e2b-it-onnx/
     ...
-  lane/
-    segformer-b0-cityscapes/
-      model_quantized.onnx
 ```
 
 Docker Compose mounts production model storage here:
@@ -89,42 +83,6 @@ models/yolo/yolo11n.onnx
 ```
 
 The Docker Compose web service mounts `./models` to `/app/public/models:ro`, so `models/yolo/yolo11n.onnx` must exist for containerized YOLO inference. Local development can still use `public/models/yolo/yolo11n.onnx`.
-
-## Lane Segmentation
-
-Layer 3 lane perception can load a browser-side ONNX semantic segmentation model. The current downloaded benchmark artifact is:
-
-- Source model repo: `Xenova/segformer-b0-finetuned-cityscapes-640-1280`
-- Base model: `nvidia/segformer-b0-finetuned-cityscapes-640-1280`
-- Browser artifact: `onnx/model_quantized.onnx`
-- Local host volume path: `models/lane/segformer-b0-cityscapes/model_quantized.onnx`
-- Runtime: `onnxruntime-web`
-- Preferred execution provider: WebGPU
-- Fallback execution provider: WASM
-- Input size: `224`
-- Target channel: `0`, Cityscapes `road`
-
-Download helper:
-
-```bash
-bash scripts/prepare-lane-segformer-cityscapes.sh
-```
-
-Default config:
-
-```env
-NEXT_PUBLIC_LANE_MODEL_URL=/models/lane/segformer-b0-cityscapes/model_quantized.onnx
-NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE=224
-NEXT_PUBLIC_LANE_MODEL_PROVIDER=webgpu,wasm
-NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL=0
-NEXT_PUBLIC_LANE_MODEL_THRESHOLD=0.5
-```
-
-Notes:
-
-- This model segments road area, not lane markings. It is useful for the `ONNX Seg` road-area benchmark path.
-- The official `akhaliq/YOLOP` Hugging Face repo currently contains `.bin` weights rather than a browser-ready ONNX file, so YOLOP remains a planned adapter target until a compatible ONNX export is produced or selected.
-- The app keeps YOLO11n object detection independent while road/lane segmentation models are evaluated.
 
 ## Gemma4-E2B
 

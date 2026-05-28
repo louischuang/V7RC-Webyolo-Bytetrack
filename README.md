@@ -21,9 +21,6 @@ public/models/              # local development path
     yolo11n.onnx
   gemma4-e2b-it-onnx/
     ...
-  lane/
-    segformer-b0-cityscapes/
-      model_quantized.onnx
 
 models/                     # production host-mounted path
   yolo/
@@ -40,7 +37,6 @@ NEXT_PUBLIC_LLM_RUNTIME=transformers
 NEXT_PUBLIC_LLM_DEVICE=webgpu
 NEXT_PUBLIC_LLM_MODEL_ID=gemma-4-E2B-it-ONNX
 NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it-onnx
-NEXT_PUBLIC_LANE_MODEL_URL=/models/lane/segformer-b0-cityscapes/model_quantized.onnx
 ```
 
 More details: [docs/models.md](docs/models.md).
@@ -143,32 +139,6 @@ NEXT_PUBLIC_LLM_MODEL_URL=/models/gemma4-e2b-it
 NEXT_PUBLIC_LLM_MODEL_LIB_URL=/models/gemma4-e2b-it/libs/gemma-4-E2B-it-q4f16_1-MLC-webgpu.wasm
 ```
 
-## Prepare Lane Segmentation ONNX
-
-Download the current Layer 3 road segmentation benchmark model to the host-side model volume:
-
-```bash
-bash scripts/prepare-lane-segformer-cityscapes.sh
-```
-
-This downloads `Xenova/segformer-b0-finetuned-cityscapes-640-1280` to:
-
-```text
-models/lane/segformer-b0-cityscapes/
-```
-
-Docker Compose mounts `./models` into `/app/public/models`, so the browser serves it from:
-
-```env
-NEXT_PUBLIC_LANE_MODEL_URL=/models/lane/segformer-b0-cityscapes/model_quantized.onnx
-NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE=224
-NEXT_PUBLIC_LANE_MODEL_PROVIDER=webgpu,wasm
-NEXT_PUBLIC_LANE_MODEL_TARGET_CHANNEL=0
-NEXT_PUBLIC_LANE_MODEL_THRESHOLD=0.5
-```
-
-For this Cityscapes model, target channel `0` is `road`. It is a road-area segmentation benchmark, not a dedicated lane-marking model. YOLOP official Hugging Face currently provides PyTorch-style artifacts rather than a browser-ready ONNX file, so YOLOP remains a mode/adapter target until a compatible ONNX export is prepared.
-
 ## Docker
 
 ```bash
@@ -228,21 +198,6 @@ Keep YOLO11n object detection as the current safety/object baseline, then evalua
 | `ONNX road/lane segmentation` | Dedicated road mask or lane mask fallback | Useful when lane markings are weak but road region is visible. |
 
 The technical evaluation should measure FPS, YOLO time, lane processing time, total UI responsiveness, memory growth, and correctness on clear highway, tunnel, dusk, rainy/low-contrast, and worn-lane clips.
-
-Current implementation status:
-
-- The Bird's-Eye View card now exposes a `Perception` selector for `Classical`, `YOLOP`, and `ONNX Seg`.
-- `Classical` keeps the current YOLO11n object detector plus browser classical lane pipeline.
-- `YOLOP` and `ONNX Seg` route through the Layer 3 segmentation adapter benchmark path. If `NEXT_PUBLIC_LANE_MODEL_URL` points to a browser-compatible ONNX segmentation artifact, the browser loads it with ONNX Runtime Web and decodes its mask into bird-view lane paths. Without a model URL, the adapter uses the same bird-view input and a segmentation-style mask fallback so latency, confidence, drop count, and UI wiring can be compared without disrupting YOLO11n safety detection.
-- Benchmark snapshots include the active perception mode plus lane and segmentation timing fields.
-
-Configurable lane model environment fields:
-
-- `NEXT_PUBLIC_LANE_MODEL_URL`
-- `NEXT_PUBLIC_LANE_MODEL_INPUT_SIZE`
-- `NEXT_PUBLIC_LANE_MODEL_PROVIDER`
-- `NEXT_PUBLIC_LANE_MODEL_FRAME_INTERVAL`
-- `NEXT_PUBLIC_LANE_MODEL_THRESHOLD`
 
 ## Next MVP: Task And Autopilot Console
 

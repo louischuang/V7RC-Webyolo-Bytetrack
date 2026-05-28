@@ -517,50 +517,6 @@ input {
   accent-color: var(--accent);
 }
 
-.perception-mode-control,
-.perception-benchmark {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.7);
-}
-
-.perception-mode-control {
-  grid-template-columns: 1fr;
-}
-
-.perception-benchmark {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.perception-mode-control > span,
-.perception-mode-control > strong,
-.perception-benchmark span,
-.perception-benchmark strong {
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
-}
-
-.perception-mode-control > strong,
-.perception-benchmark strong {
-  color: var(--text);
-  text-align: right;
-}
-
-.compact-segmented-control {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 4px;
-}
-
-.compact-segmented-control button {
-  min-height: 34px;
-  padding: 0 8px;
-  font-size: 11px;
-}
-
 .roi-controls button {
   width: 100%;
 }
