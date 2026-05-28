@@ -223,7 +223,7 @@ const defaultFixedPrompt =
   "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
-const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
+const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v2";
 const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
 const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "camera", label: "Camera" },
@@ -247,11 +247,11 @@ const lanePerceptionModes: Array<{ detail: string; id: LanePerceptionMode; label
 ];
 const robotCommandIntervalMs = 30;
 const laneDetectionIntervalMs = 140;
-const birdViewDefaultTopY = 0.65;
+const birdViewDefaultTopY = 0.52;
 const birdViewDefaultTopCenterX = 0.5;
-const birdViewDefaultTopWidth = 0.16;
-const birdViewDefaultBottomY = 0.93;
-const birdViewDefaultBottomWidth = 0.9;
+const birdViewDefaultTopWidth = 0.34;
+const birdViewDefaultBottomY = 0.97;
+const birdViewDefaultBottomWidth = 0.98;
 const birdViewDefaultHeightScale = 1.5;
 const birdViewBaseWidth = 320;
 const birdViewBaseHeight = 220;
@@ -754,7 +754,7 @@ export default function Home() {
           setUseRobustLaneScoring(cachedSettings.useRobustLaneScoring);
         }
         if (typeof cachedSettings?.roiBottomWidth === "number") {
-          setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 0.98));
+          setRoiBottomWidth(clamp(cachedSettings.roiBottomWidth, 0.72, 1));
         }
         if (typeof cachedSettings?.roiBottomY === "number") {
           setRoiBottomY(clamp(cachedSettings.roiBottomY, 0.78, 0.99));
@@ -763,10 +763,10 @@ export default function Home() {
           setRoiTopCenterX(clamp(cachedSettings.roiTopCenterX, 0.35, 0.65));
         }
         if (typeof cachedSettings?.roiTopWidth === "number") {
-          setRoiTopWidth(clamp(cachedSettings.roiTopWidth, 0.08, 0.42));
+          setRoiTopWidth(clamp(cachedSettings.roiTopWidth, 0.08, 0.62));
         }
         if (typeof cachedSettings?.roiTopY === "number") {
-          setRoiTopY(clamp(cachedSettings.roiTopY, 0.58, 0.72));
+          setRoiTopY(clamp(cachedSettings.roiTopY, 0.45, 0.72));
         }
         setBirdViewSettingsHydrated(true);
       });
@@ -2069,7 +2069,7 @@ export default function Home() {
                 <span>Top Y</span>
                 <input
                   type="range"
-                  min="0.58"
+                  min="0.45"
                   max="0.72"
                   step="0.01"
                   value={roiTopY}
@@ -2100,7 +2100,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.08"
-                  max="0.42"
+                  max="0.62"
                   step="0.01"
                   value={roiTopWidth}
                   onChange={(event) => {
@@ -2115,7 +2115,7 @@ export default function Home() {
                 <input
                   type="range"
                   min="0.72"
-                  max="0.98"
+                  max="1"
                   step="0.01"
                   value={roiBottomWidth}
                   onChange={(event) => {
@@ -4396,11 +4396,11 @@ function createManualRoadCalibration(
   bottomY: number,
   bottomWidth: number,
 ): RoadCalibration {
-  const safeTopY = clamp(topY, 0.5, 0.8);
+  const safeTopY = clamp(topY, 0.42, 0.8);
   const safeTopCenterX = clamp(topCenterX, 0.25, 0.75);
-  const safeTopWidth = clamp(topWidth, 0.06, 0.48);
+  const safeTopWidth = clamp(topWidth, 0.06, 0.66);
   const safeBottomY = clamp(bottomY, safeTopY + 0.08, 0.99);
-  const safeBottomWidth = clamp(bottomWidth, 0.62, 0.98);
+  const safeBottomWidth = clamp(bottomWidth, 0.62, 1);
 
   return {
     bottomLeftX: (1 - safeBottomWidth) / 2,
