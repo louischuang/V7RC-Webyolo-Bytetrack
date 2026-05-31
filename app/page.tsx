@@ -73,9 +73,27 @@ type TrackRow = {
 type RobotMode = "suggestion" | "armed";
 type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
+type MissionStatus = "running" | "complete" | "blocked" | "unsafe" | "failed";
+type MissionMove = "forward" | "backward" | "left" | "right" | "turn_left" | "turn_right" | "stop";
 type SafetyLevel = "clear" | "caution" | "blocked";
 type LlmDevice = "wasm" | "webgpu";
 type NormalizedPoint = { x: number; y: number };
+type MissionAction = {
+  move: MissionMove;
+  ms: number;
+  speed: number;
+};
+type MissionPlan = {
+  version: 1;
+  message: string;
+  missionStatus: MissionStatus;
+  planDurationMs: number;
+  actions: MissionAction[];
+};
+type MissionActionPreview = {
+  action: MissionAction;
+  channels: ReturnType<typeof previewSrtChannels>;
+};
 type SafetyAssessment = {
   hazardTrackId: string | null;
   level: SafetyLevel;
@@ -387,6 +405,8 @@ export default function Home() {
   const [robotTaskMode, setRobotTaskMode] = useState<RobotTaskMode>("autopilot");
   const [robotTaskStatus, setRobotTaskStatus] = useState<RobotTaskStatus>("idle");
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
+  const [missionPlan, setMissionPlan] = useState<MissionPlan | null>(null);
+  const [missionPlanError, setMissionPlanError] = useState("");
   const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [safetyAssessment, setSafetyAssessment] = useState<SafetyAssessment>(() => createClearSafetyAssessment());
   const [laneConfidence, setLaneConfidence] = useState(0);
@@ -454,6 +474,14 @@ export default function Home() {
     () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(autopilotSuggestion, robotDriveMode))),
     [autopilotSuggestion, robotDriveMode],
   );
+  const missionActionPreviews = useMemo<MissionActionPreview[]>(
+    () =>
+      missionPlan?.actions.slice(0, 6).map((action) => ({
+        action,
+        channels: previewSrtChannels(missionActionToIntent(action), robotDriveMode).slice(0, 4),
+      })) ?? [],
+    [missionPlan, robotDriveMode],
+  );
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
@@ -477,7 +505,15 @@ export default function Home() {
       return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}${suggestionText}${safetyText}`;
     }
 
-    return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
+    if (missionPlanError) {
+      return `Mission JSON rejected: ${missionPlanError}. Output remains neutral until a valid plan is received.`;
+    }
+
+    if (missionPlan) {
+      return `Mission plan ${missionPlan.missionStatus}: ${missionPlan.message}. ${missionPlan.actions.length} action(s), ${missionPlan.planDurationMs} ms total.`;
+    }
+
+    return "Gemma JSON mission planner pending; valid plans are previewed before they are converted into 30ms SRT frames.";
   }, [
     autopilotSuggestion.autonomy,
     autopilotSuggestion.neutral,
@@ -487,6 +523,8 @@ export default function Home() {
     filterLaneHeading,
     inferMissingLane,
     laneConfidence,
+    missionPlan,
+    missionPlanError,
     robotTaskMode,
     roiConfidence,
     safetyAssessment.level,
@@ -1194,13 +1232,28 @@ export default function Home() {
       const elapsedMs = performance.now() - startedAt;
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
       const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
+      const responseText = emptyResponse ? fallbackResponse : generation.text;
+      if (robotTaskMode === "mission") {
+        const parsedPlan = parseMissionPlanResponse(responseText);
+        if (parsedPlan.ok) {
+          setMissionPlan(parsedPlan.plan);
+          setMissionPlanError("");
+          setRobotTaskMessage(`Mission: ${parsedPlan.plan.message}`);
+          setRobotTaskStatus(missionStatusToTaskStatus(parsedPlan.plan.missionStatus));
+        } else {
+          setMissionPlan(null);
+          setMissionPlanError(parsedPlan.error);
+          setRobotTaskStatus("error");
+          setRobotTaskMessage(`Mission JSON rejected: ${parsedPlan.error}`);
+        }
+      }
       setLastInferenceMs(elapsedMs);
       setResponseCount((count) => count + 1);
       setChatMessages((messages) => [
         ...messages.slice(-24),
         {
           role: "assistant",
-          content: emptyResponse ? fallbackResponse : generation.text,
+          content: responseText,
         },
       ]);
       setLlmState("ready");
@@ -1453,6 +1506,8 @@ export default function Home() {
     if (robotTaskStatus === "running") {
       setRobotTaskStatus("idle");
       setRobotTaskMessage("任務已停止，等待下一次 Start。");
+      setMissionPlan(null);
+      setMissionPlanError("");
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
       sendRobotIntent(createNeutralIntent());
@@ -1460,6 +1515,8 @@ export default function Home() {
     }
 
     setRobotTaskStatus("running");
+    setMissionPlan(null);
+    setMissionPlanError("");
     if (robotTaskMode === "autopilot") {
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
@@ -2012,6 +2069,8 @@ export default function Home() {
                   onClick={() => {
                     setRobotTaskMode(mode.id);
                     setRobotTaskStatus("idle");
+                    setMissionPlan(null);
+                    setMissionPlanError("");
                     setAutopilotSuggestion(createNeutralIntent());
                     setSafetyAssessment(createClearSafetyAssessment());
                     setRobotTaskMessage(mode.id === "autopilot" ? "自動駕駛待命。" : "解任務待命。");
@@ -2080,6 +2139,34 @@ export default function Home() {
               </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
+            {robotTaskMode === "mission" ? (
+              <div className="mission-plan-preview" aria-label="Mission command plan preview">
+                <div className="mission-plan-heading">
+                  <span>Mission Plan Preview</span>
+                  <strong>{missionPlan ? missionPlan.missionStatus.toUpperCase() : missionPlanError ? "INVALID" : "WAITING"}</strong>
+                </div>
+                {missionPlanError ? <p>{missionPlanError}</p> : null}
+                {missionPlan ? (
+                  <div className="mission-action-list">
+                    {missionActionPreviews.map((preview, index) => (
+                      <div className="mission-action-row" key={`${preview.action.move}-${index}`}>
+                        <span>{index + 1}</span>
+                        <strong>{preview.action.move}</strong>
+                        <span>{preview.action.ms} ms</span>
+                        <span>{Math.round(preview.action.speed * 100)}%</span>
+                        <code>
+                          {preview.channels
+                            .map((channel) => `CH${channel.index}:${channel.pwmUs}`)
+                            .join(" ")}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>Start Mission mode and run Gemma to preview a validated JSON action plan.</p>
+                )}
+              </div>
+            ) : null}
           </section>
 
           <section className="birdview-card">
@@ -3830,6 +3917,148 @@ function laneBandCenterAtY(band: LaneBand, y: number) {
 
 function isLaneDetectionUsable(detection: LaneDetection) {
   return detection.confidence >= 0.35 && detection.laneBands.length > 0 && detection.egoLaneIndex !== null;
+}
+
+function parseMissionPlanResponse(response: string): { ok: true; plan: MissionPlan } | { ok: false; error: string } {
+  const jsonText = extractJsonObject(response);
+  if (!jsonText) {
+    return { ok: false, error: "No JSON object found in Gemma response." };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Invalid JSON." };
+  }
+
+  if (!isRecord(parsed)) {
+    return { ok: false, error: "Mission plan must be a JSON object." };
+  }
+
+  const status = typeof parsed.missionStatus === "string" ? parsed.missionStatus : "";
+  if (!isMissionStatus(status)) {
+    return { ok: false, error: "missionStatus must be running, complete, blocked, unsafe, or failed." };
+  }
+
+  const rawActions = Array.isArray(parsed.actions) ? parsed.actions : [];
+  const actions: MissionAction[] = [];
+  for (const rawAction of rawActions.slice(0, 8)) {
+    if (!isRecord(rawAction)) {
+      return { ok: false, error: "Each action must be an object." };
+    }
+
+    const move = typeof rawAction.move === "string" ? rawAction.move : "";
+    if (!isMissionMove(move)) {
+      return { ok: false, error: `Unsupported action move: ${move || "missing"}.` };
+    }
+
+    const ms = Number(rawAction.ms);
+    const speed = Number(rawAction.speed ?? (move === "stop" ? 0 : 0.25));
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return { ok: false, error: "Each action.ms must be a positive number." };
+    }
+
+    actions.push({
+      move,
+      ms: Math.round(clamp(ms, robotCommandIntervalMs, 2000)),
+      speed: move === "stop" ? 0 : clamp(speed, 0, robotSafetyLimits.maxSpeedScale),
+    });
+  }
+
+  if (actions.length === 0) {
+    actions.push({ move: "stop", ms: robotCommandIntervalMs, speed: 0 });
+  }
+
+  const planDurationMs = Math.round(
+    clamp(Number(parsed.planDurationMs) || actions.reduce((total, action) => total + action.ms, 0), robotCommandIntervalMs, 2000),
+  );
+  const message = typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : "Mission plan received.";
+  const terminalStatuses = new Set<MissionStatus>(["blocked", "unsafe", "failed", "complete"]);
+  if (terminalStatuses.has(status) && actions.at(-1)?.move !== "stop") {
+    actions.push({ move: "stop", ms: robotCommandIntervalMs, speed: 0 });
+  }
+
+  return {
+    ok: true,
+    plan: {
+      actions,
+      message,
+      missionStatus: status,
+      planDurationMs,
+      version: 1,
+    },
+  };
+}
+
+function extractJsonObject(response: string) {
+  const fenced = response.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const text = (fenced?.[1] ?? response).trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start >= 0 && end > start ? text.slice(start, end + 1) : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isMissionStatus(value: string): value is MissionStatus {
+  return ["running", "complete", "blocked", "unsafe", "failed"].includes(value);
+}
+
+function isMissionMove(value: string): value is MissionMove {
+  return ["forward", "backward", "left", "right", "turn_left", "turn_right", "stop"].includes(value);
+}
+
+function missionStatusToTaskStatus(status: MissionStatus): RobotTaskStatus {
+  if (status === "complete") {
+    return "complete";
+  }
+
+  if (status === "blocked") {
+    return "blocked";
+  }
+
+  if (status === "unsafe") {
+    return "unsafe";
+  }
+
+  if (status === "failed") {
+    return "error";
+  }
+
+  return "running";
+}
+
+function missionActionToIntent(action: MissionAction): V7rcRobotIntent {
+  if (action.move === "stop") {
+    return createNeutralIntent();
+  }
+
+  const intent = {
+    ...createNeutralIntent(),
+    autonomy: true,
+    neutral: false,
+    speedScale: clamp(action.speed, 0, robotSafetyLimits.maxSpeedScale),
+  };
+
+  if (action.move === "forward") {
+    return { ...intent, linear: 1 };
+  }
+  if (action.move === "backward") {
+    return { ...intent, linear: -1 };
+  }
+  if (action.move === "left") {
+    return { ...intent, strafe: -1 };
+  }
+  if (action.move === "right") {
+    return { ...intent, strafe: 1 };
+  }
+  if (action.move === "turn_left") {
+    return { ...intent, turn: -1 };
+  }
+  return { ...intent, turn: 1 };
 }
 
 function createClearSafetyAssessment(): SafetyAssessment {

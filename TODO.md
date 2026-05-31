@@ -285,7 +285,7 @@ Next planning target:
 - [x] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
 - [ ] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
 - [ ] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
-- [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
+- [x] Add first-pass JSON parsing, schema validation, and fallback-to-neutral preview behavior for invalid Gemma output.
 - [ ] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
 - [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
@@ -301,7 +301,7 @@ Next planning target:
 - [x] Add Start/Stop icon button on the Robot Task card.
 - [x] Add task status states: idle, running, complete, blocked, unsafe, error.
 - [x] Add task message display.
-- [ ] Add command-plan preview for Mission mode.
+- [x] Add command-plan preview for Mission mode.
 - [x] Add Bird's-Eye View card below Robot Task.
 - [ ] Implement perspective transform calibration settings.
 - [ ] Render current frame as bird's-eye view.

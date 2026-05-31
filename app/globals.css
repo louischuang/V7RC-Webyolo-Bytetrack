@@ -529,6 +529,69 @@ input {
   font-size: 12px;
 }
 
+.mission-plan-preview {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.08);
+  padding: 10px;
+}
+
+.mission-plan-heading,
+.mission-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.mission-plan-heading span,
+.mission-action-row span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.mission-plan-heading strong {
+  color: #99f6e4;
+  font-size: 11px;
+}
+
+.mission-plan-preview p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mission-action-list {
+  display: grid;
+  gap: 6px;
+}
+
+.mission-action-row {
+  grid-template-columns: 22px minmax(72px, 0.85fr) 58px 42px minmax(0, 1.4fr);
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  padding-top: 6px;
+}
+
+.mission-action-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.mission-action-row strong {
+  font-size: 12px;
+}
+
+.mission-action-row code {
+  overflow: hidden;
+  color: #bae6fd;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .birdview-card {
   order: -1;
   padding: 0;
