@@ -543,6 +543,49 @@ input {
   padding: 10px;
 }
 
+.mission-goal-editor {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+  padding: 10px;
+}
+
+.mission-goal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mission-goal-heading span,
+.mission-goal-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.mission-goal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 8px;
+}
+
+.mission-goal-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.mission-goal-grid label:nth-child(n + 3) {
+  grid-column: 1 / -1;
+}
+
+.mission-goal-grid textarea {
+  min-height: 60px;
+}
+
 .mission-plan-heading,
 .mission-action-row {
   display: grid;

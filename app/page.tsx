@@ -75,14 +75,34 @@ type RobotMode = "suggestion" | "armed";
 type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
 type MissionStatus = "running" | "complete" | "blocked" | "unsafe" | "failed";
-type MissionMove = "forward" | "backward" | "left" | "right" | "turn_left" | "turn_right" | "stop";
+type MissionMove = "forward" | "backward" | "left" | "right" | "strafe_left" | "strafe_right" | "turn_left" | "turn_right" | "stop";
+type RobotTargetColor = "any" | "red" | "blue" | "green" | "yellow" | "black" | "white";
 type SafetyLevel = "clear" | "caution" | "blocked";
 type LlmDevice = "wasm" | "webgpu";
 type NormalizedPoint = { x: number; y: number };
+type RobotGoal = {
+  targetObject: string;
+  targetColor: RobotTargetColor;
+  successCondition: string;
+  safetyConstraints: string;
+};
 type MissionAction = {
   move: MissionMove;
   ms: number;
   speed: number;
+};
+type PerceptionState = {
+  tracks: Track[];
+  safety: SafetyAssessment;
+  laneDetection: LaneDetection | null;
+  driveMode: V7rcDriveMode;
+};
+type GemmaAction = MissionAction;
+type RobotCommand = {
+  action: GemmaAction;
+  intent: V7rcRobotIntent;
+  pwmUs: number[];
+  durationMs: number;
 };
 type MissionPlan = {
   version: 1;
@@ -94,6 +114,7 @@ type MissionPlan = {
 type MissionActionPreview = {
   action: MissionAction;
   channels: ReturnType<typeof previewSrtChannels>;
+  command: RobotCommand;
 };
 type MissionExecutionState = {
   active: boolean;
@@ -257,7 +278,7 @@ const missionFixedPrompt = `請輸出以下 JSON schema：
   "missionStatus": "running | complete | blocked | unsafe | failed",
   "planDurationMs": 2000,
   "actions": [
-    { "move": "forward | backward | left | right | turn_left | turn_right | stop", "ms": 500, "speed": 0.25 }
+    { "move": "forward | backward | strafe_left | strafe_right | turn_left | turn_right | stop", "ms": 500, "speed": 0.25 }
   ]
 }
 限制：planDurationMs 不可超過 2000；每個 speed 介於 0 到 0.5；若不安全，actions 最後必須是 stop。`;
@@ -265,6 +286,22 @@ const missionFixedPrompt = `請輸出以下 JSON schema：
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
 const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
+const robotGoalStorageKey = "v7rc.robot-goal.v1";
+const defaultRobotGoal: RobotGoal = {
+  safetyConstraints: "若前方有人、車輛或障礙物過近，或車道狀態不可用，必須停止。",
+  successCondition: "走到目標物前方安全距離並停止，message 包含任務完成。",
+  targetColor: "red",
+  targetObject: "box",
+};
+const robotTargetColors: Array<{ id: RobotTargetColor; label: string }> = [
+  { id: "any", label: "Any" },
+  { id: "red", label: "Red" },
+  { id: "blue", label: "Blue" },
+  { id: "green", label: "Green" },
+  { id: "yellow", label: "Yellow" },
+  { id: "black", label: "Black" },
+  { id: "white", label: "White" },
+];
 const sourceModes: Array<{ id: SourceMode; label: string }> = [
   { id: "camera", label: "Camera" },
   { id: "mjpg", label: "MJPG" },
@@ -418,6 +455,8 @@ export default function Home() {
   const [missionPlan, setMissionPlan] = useState<MissionPlan | null>(null);
   const [missionPlanError, setMissionPlanError] = useState("");
   const [missionExecution, setMissionExecution] = useState<MissionExecutionState>(() => createIdleMissionExecution());
+  const [robotGoal, setRobotGoal] = useState<RobotGoal>(defaultRobotGoal);
+  const [robotGoalHydrated, setRobotGoalHydrated] = useState(false);
   const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [safetyAssessment, setSafetyAssessment] = useState<SafetyAssessment>(() => createClearSafetyAssessment());
   const [laneConfidence, setLaneConfidence] = useState(0);
@@ -488,10 +527,14 @@ export default function Home() {
   );
   const missionActionPreviews = useMemo<MissionActionPreview[]>(
     () =>
-      missionPlan?.actions.slice(0, 6).map((action) => ({
-        action,
-        channels: previewSrtChannels(missionActionToIntent(action), robotDriveMode).slice(0, 4),
-      })) ?? [],
+      missionPlan?.actions.slice(0, 6).map((action) => {
+        const command = missionActionToRobotCommand(action, robotDriveMode);
+        return {
+          action,
+          channels: previewSrtChannels(command.intent, robotDriveMode).slice(0, 4),
+          command,
+        };
+      }) ?? [],
     [missionPlan, robotDriveMode],
   );
   const robotTaskRunning = robotTaskStatus === "running";
@@ -714,6 +757,13 @@ export default function Home() {
     setRobotTaskMessage("Lane benchmark history cleared.");
   }, [persistLaneBenchmarkHistory]);
 
+  const updateRobotGoal = useCallback((patch: Partial<RobotGoal>) => {
+    setRobotGoal((current) => ({
+      ...current,
+      ...patch,
+    }));
+  }, []);
+
   useEffect(() => {
     let cachedSettings: Partial<{
       includeFrame: boolean;
@@ -770,6 +820,36 @@ export default function Home() {
       }),
     );
   }, [fixedPrompt, includeFrame, settingsHydrated, systemPrompt]);
+
+  useEffect(() => {
+    let cachedGoal: Partial<RobotGoal> | null = null;
+
+    try {
+      const cached = window.localStorage.getItem(robotGoalStorageKey);
+      if (!cached) {
+        return;
+      }
+
+      cachedGoal = JSON.parse(cached) as Partial<RobotGoal>;
+    } catch {
+      window.localStorage.removeItem(robotGoalStorageKey);
+    } finally {
+      queueMicrotask(() => {
+        if (cachedGoal) {
+          setRobotGoal(sanitizeRobotGoal(cachedGoal));
+        }
+        setRobotGoalHydrated(true);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!robotGoalHydrated) {
+      return;
+    }
+
+    window.localStorage.setItem(robotGoalStorageKey, JSON.stringify(robotGoal));
+  }, [robotGoal, robotGoalHydrated]);
 
   useEffect(() => {
     let cachedSettings: Partial<{
@@ -1222,7 +1302,17 @@ export default function Home() {
 
     const prompt =
       robotTaskMode === "mission"
-        ? `${missionFixedPrompt}\n\n任務目標：${fixedPrompt.trim() || "尋找目標並保持安全。"}`
+        ? buildMissionPrompt(
+            fixedPrompt.trim(),
+            robotGoal,
+            {
+              driveMode: robotDriveMode,
+              laneDetection: laneDetectionRef.current,
+              safety: safetyAssessment,
+              tracks: tracksRef.current,
+            },
+            missionExecution,
+          )
         : fixedPrompt.trim() || defaultFixedPrompt;
     const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current, safetyAssessment) : "";
     const imageDataUrl = includeFrame
@@ -1292,7 +1382,7 @@ export default function Home() {
         }, runtimeDefaults.llmLoopDelayMs);
       }
     }
-  }, [fixedPrompt, includeFrame, robotTaskMode, safetyAssessment, sourceSurface, systemPrompt]);
+  }, [fixedPrompt, includeFrame, missionExecution, robotDriveMode, robotGoal, robotTaskMode, safetyAssessment, sourceSurface, systemPrompt]);
 
   useEffect(() => {
     runInferenceRoundRef.current = runInferenceRound;
@@ -2252,39 +2342,75 @@ export default function Home() {
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
             {robotTaskMode === "mission" ? (
-              <div className="mission-plan-preview" aria-label="Mission command plan preview">
-                <div className="mission-plan-heading">
-                  <span>Mission Plan Preview</span>
-                  <strong>{missionPlan ? missionPlan.missionStatus.toUpperCase() : missionPlanError ? "INVALID" : "WAITING"}</strong>
-                </div>
-                {missionPlanError ? <p>{missionPlanError}</p> : null}
-                {missionPlan ? (
-                  <div className="mission-action-list">
-                    {missionActionPreviews.map((preview, index) => (
-                      <div
-                        className={`mission-action-row ${missionExecution.active && missionExecution.actionIndex === index ? "active" : ""}`}
-                        key={`${preview.action.move}-${index}`}
-                      >
-                        <span>{index + 1}</span>
-                        <strong>{preview.action.move}</strong>
-                        <span>{preview.action.ms} ms</span>
-                        <span>{Math.round(preview.action.speed * 100)}%</span>
-                        <code>
-                          {preview.channels
-                            .map((channel) => `CH${channel.index}:${channel.pwmUs}`)
-                            .join(" ")}
-                        </code>
-                      </div>
-                    ))}
-                    <div className="mission-execution-meta">
-                      <span>{missionExecution.active ? `${missionExecution.elapsedMs} ms elapsed` : "sequence idle"}</span>
-                      <span>{robotMode === "armed" && robotStatus.connected ? "armed output" : "preview only"}</span>
-                    </div>
+              <>
+                <div className="mission-goal-editor" aria-label="Mission goal editor">
+                  <div className="mission-goal-heading">
+                    <span>Mission Goal</span>
+                    <button className="bare-icon-button" type="button" onClick={() => setRobotGoal(defaultRobotGoal)} title="Reset mission goal" aria-label="Reset mission goal">
+                      <svg aria-hidden="true" viewBox="0 0 24 24">
+                        <path d="M3 12a9 9 0 1 0 3-6.7" />
+                        <path d="M3 4v5h5" />
+                      </svg>
+                    </button>
                   </div>
-                ) : (
-                  <p>Start Mission mode and run Gemma to preview a validated JSON action plan.</p>
-                )}
-              </div>
+                  <div className="mission-goal-grid">
+                    <label>
+                      <span>Target Object</span>
+                      <input value={robotGoal.targetObject} onChange={(event) => updateRobotGoal({ targetObject: event.target.value })} />
+                    </label>
+                    <label>
+                      <span>Target Color</span>
+                      <select value={robotGoal.targetColor} onChange={(event) => updateRobotGoal({ targetColor: event.target.value as RobotTargetColor })}>
+                        {robotTargetColors.map((color) => (
+                          <option key={color.id} value={color.id}>
+                            {color.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Success Condition</span>
+                      <textarea value={robotGoal.successCondition} onChange={(event) => updateRobotGoal({ successCondition: event.target.value })} rows={2} />
+                    </label>
+                    <label>
+                      <span>Safety Constraints</span>
+                      <textarea value={robotGoal.safetyConstraints} onChange={(event) => updateRobotGoal({ safetyConstraints: event.target.value })} rows={2} />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="mission-plan-preview" aria-label="Mission command plan preview">
+                  <div className="mission-plan-heading">
+                    <span>Mission Plan Preview</span>
+                    <strong>{missionPlan ? missionPlan.missionStatus.toUpperCase() : missionPlanError ? "INVALID" : "WAITING"}</strong>
+                  </div>
+                  {missionPlanError ? <p>{missionPlanError}</p> : null}
+                  {missionPlan ? (
+                    <div className="mission-action-list">
+                      {missionActionPreviews.map((preview, index) => (
+                        <div
+                          className={`mission-action-row ${missionExecution.active && missionExecution.actionIndex === index ? "active" : ""}`}
+                          key={`${preview.action.move}-${index}`}
+                        >
+                          <span>{index + 1}</span>
+                          <strong>{preview.action.move}</strong>
+                          <span>{preview.action.ms} ms</span>
+                          <span>{Math.round(preview.action.speed * 100)}%</span>
+                          <code>
+                            {preview.command.pwmUs.map((pwmUs, channelIndex) => `CH${channelIndex}:${pwmUs}`).join(" ")}
+                          </code>
+                        </div>
+                      ))}
+                      <div className="mission-execution-meta">
+                        <span>{missionExecution.active ? `${missionExecution.elapsedMs} ms elapsed` : "sequence idle"}</span>
+                        <span>{robotMode === "armed" && robotStatus.connected ? "armed output" : "preview only"}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p>Start Mission mode and run Gemma to preview a validated JSON action plan.</p>
+                  )}
+                </div>
+              </>
             ) : null}
           </section>
 
@@ -3009,6 +3135,71 @@ function buildSceneSummary(tracks: Track[], safety: SafetyAssessment) {
     .join("\n");
 
   return `${safetyLine}\n${objectLines}`;
+}
+
+function sanitizeRobotGoal(goal: Partial<RobotGoal>): RobotGoal {
+  return {
+    safetyConstraints:
+      typeof goal.safetyConstraints === "string" && goal.safetyConstraints.trim()
+        ? goal.safetyConstraints.trim()
+        : defaultRobotGoal.safetyConstraints,
+    successCondition:
+      typeof goal.successCondition === "string" && goal.successCondition.trim()
+        ? goal.successCondition.trim()
+        : defaultRobotGoal.successCondition,
+    targetColor:
+      typeof goal.targetColor === "string" && isRobotTargetColor(goal.targetColor)
+        ? goal.targetColor
+        : defaultRobotGoal.targetColor,
+    targetObject:
+      typeof goal.targetObject === "string" && goal.targetObject.trim()
+        ? goal.targetObject.trim()
+        : defaultRobotGoal.targetObject,
+  };
+}
+
+function isRobotTargetColor(value: string): value is RobotTargetColor {
+  return robotTargetColors.some((color) => color.id === value);
+}
+
+function buildMissionPrompt(
+  fixedPrompt: string,
+  goal: RobotGoal,
+  perception: PerceptionState,
+  execution: MissionExecutionState,
+) {
+  const trackSummary =
+    perception.tracks.length === 0
+      ? "目前沒有追蹤物件。"
+      : perception.tracks
+          .slice(0, 10)
+          .map((track) => `${track.id}:${track.label}:${track.confidence.toFixed(2)}`)
+          .join(", ");
+  const laneSummary = perception.laneDetection
+    ? `egoLaneId=${perception.laneDetection.egoLaneId ?? 1}, offset=${formatLaneOffset(perception.laneDetection.egoLaneCenterOffset)}, confidence=${Math.round(perception.laneDetection.confidence * 100)}%`
+    : "lane=pending";
+  const recentCommand = execution.active
+    ? `actionIndex=${execution.actionIndex + 1}, elapsedMs=${execution.elapsedMs}, remainingMs=${execution.remainingMs}, framesSent=${execution.framesSent}`
+    : "none";
+  const missionInstruction = fixedPrompt || "尋找任務目標，保持安全，逐步接近目標。";
+
+  return `${missionFixedPrompt}
+
+任務目標：
+- targetObject: ${goal.targetObject}
+- targetColor: ${goal.targetColor}
+- successCondition: ${goal.successCondition}
+- safetyConstraints: ${goal.safetyConstraints}
+- userInstruction: ${missionInstruction}
+
+目前機器人狀態：
+- driveMode: ${perception.driveMode}
+- safety: ${perception.safety.level} / ${perception.safety.reason}${perception.safety.hazardTrackId ? ` / hazard=${perception.safety.hazardTrackId}` : ""}
+- birdEyeLane: ${laneSummary}
+- recentCommand: ${recentCommand}
+- tracks: ${trackSummary}
+
+請只輸出 JSON 物件，不要 Markdown，不要說明文字。`;
 }
 
 function chooseCameraDeviceId(devices: MediaDeviceInfo[], currentDeviceId: string) {
@@ -4127,7 +4318,7 @@ function isMissionStatus(value: string): value is MissionStatus {
 }
 
 function isMissionMove(value: string): value is MissionMove {
-  return ["forward", "backward", "left", "right", "turn_left", "turn_right", "stop"].includes(value);
+  return ["forward", "backward", "left", "right", "strafe_left", "strafe_right", "turn_left", "turn_right", "stop"].includes(value);
 }
 
 function createIdleMissionExecution(): MissionExecutionState {
@@ -4180,6 +4371,17 @@ function getMissionActionAtElapsed(plan: MissionPlan, elapsedMs: number) {
   return null;
 }
 
+function missionActionToRobotCommand(action: MissionAction, driveMode: V7rcDriveMode): RobotCommand {
+  const intent = missionActionToIntent(action);
+
+  return {
+    action,
+    durationMs: action.ms,
+    intent,
+    pwmUs: intentToSrtPwm(intent, driveMode),
+  };
+}
+
 function missionActionToIntent(action: MissionAction): V7rcRobotIntent {
   if (action.move === "stop") {
     return createNeutralIntent();
@@ -4198,10 +4400,10 @@ function missionActionToIntent(action: MissionAction): V7rcRobotIntent {
   if (action.move === "backward") {
     return { ...intent, linear: -1 };
   }
-  if (action.move === "left") {
+  if (action.move === "left" || action.move === "strafe_left") {
     return { ...intent, strafe: -1 };
   }
-  if (action.move === "right") {
+  if (action.move === "right" || action.move === "strafe_right") {
     return { ...intent, strafe: 1 };
   }
   if (action.move === "turn_left") {

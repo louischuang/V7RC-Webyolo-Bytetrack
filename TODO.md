@@ -277,22 +277,22 @@ Next planning target:
 
 ## Phase 14 - Gemma Robot Action Loop
 
-- [ ] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
-- [ ] Add a goal editor for target object, target color, success condition, and safety constraints.
-- [ ] Keep suggestion mode as the default: Gemma proposes actions, but hardware control remains gated.
+- [x] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
+- [x] Add a goal editor for target object, target color, success condition, and safety constraints.
+- [x] Keep suggestion mode as the default: Gemma proposes actions, but hardware control remains gated.
 - [x] Update Gemma system prompt to require strict mission action-plan JSON in Mission mode.
 - [ ] Use JSON-only prompt instructions in Chinese and reject Markdown responses.
 - [x] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
-- [ ] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
+- [x] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
 - [x] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
 - [x] Add first-pass JSON parsing, schema validation, and fallback-to-neutral preview behavior for invalid Gemma output.
-- [ ] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
+- [x] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
 - [x] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
 - [x] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
-- [ ] Display the last mission `message`, including target-visible messages and `任務完成` / `mission complete`.
+- [x] Display the last mission `message`, including target-visible messages and `任務完成` / `mission complete`.
 - [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
-- [ ] Store goal/control settings in browser local storage.
+- [x] Store goal/control settings in browser local storage.
 
 ## Phase 15 - Task Console And Bird's-Eye View
 
