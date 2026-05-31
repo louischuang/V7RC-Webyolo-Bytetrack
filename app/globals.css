@@ -78,16 +78,21 @@ button {
 }
 
 .brand-mark {
-  display: grid;
-  width: 42px;
-  height: 42px;
+  display: flex;
+  width: 114px;
+  height: 43px;
   flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid rgba(45, 212, 191, 0.45);
-  border-radius: 8px;
-  background: rgba(20, 184, 166, 0.12);
-  color: #99f6e4;
-  font-weight: 800;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #e5e7eb;
+  padding: 3px 4px;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 h1,

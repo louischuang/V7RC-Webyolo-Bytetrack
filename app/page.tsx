@@ -2,6 +2,7 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type Hls from "hls.js";
+import Image from "next/image";
 import packageInfo from "../package.json";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
@@ -2008,7 +2009,9 @@ export default function Home() {
     <main className="app-shell">
       <header className="top-menu">
         <div className="brand-block">
-          <span className="brand-mark">V7</span>
+          <span className="brand-mark" aria-label="V7RC STEAM EDU">
+            <Image src="/brand/v7rc-steam-edu.png" alt="V7RC STEAM EDU" width={114} height={43} priority />
+          </span>
           <div>
             <h1>V7RC WebYOLO ByteTrack</h1>
             <p>
