@@ -1,6 +1,14 @@
-# V7RC WebYOLO ByteTrack
+# VLA Testbed
 
-Chrome-first local web app for webcam/stream YOLO detection, ByteTrack object IDs, browser-local Gemma4-E2B perception, and the next robot closed loop over Bluetooth through the V7RC protocol.
+Browser-based VLA / robot perception-action testbed for Chrome. The app combines local camera or stream perception, YOLO11n object detection, ByteTrack tracking, lane and bird's-eye-view analysis, in-browser Gemma4-E2B reasoning, and V7RC BLE robot command generation for closed-loop robotics experiments.
+
+In this project, VLA means an experimental Vision-Language-Action loop:
+
+- **Vision:** camera/stream frames, object detection, object tracking, lane analysis, and bird's-eye projection.
+- **Language:** local Gemma4-E2B multimodal reasoning in Chrome, with structured mission goals and perception summaries.
+- **Action:** validated Mission JSON plans converted into short 30ms V7RC `SRT`/PWM command slices, gated by suggestion/armed safety controls.
+
+This is an early VLA testbed rather than an end-to-end learned motor policy. Gemma proposes structured actions, browser-side code validates and clamps them, and the safety controller decides whether commands remain preview-only or reach the V7RC BLE transport.
 
 ## Development
 
@@ -153,13 +161,20 @@ Source deep links are supported for unattended browser tests and robot launch fl
 http://localhost:3000/?source=youtube&autostart=1&url=https%3A%2F%2Fyoutu.be%2F...
 ```
 
-## Robot Control Roadmap
+## VLA Robot Control Roadmap
 
-The current app is still observation-first: camera/stream frames go through YOLO11n, ByteTrack, and Gemma4-E2B in Chrome. The next development stage adds a cautious robot control loop:
+The current app is evolving from observation-first perception toward a cautious VLA closed loop. Camera/stream frames go through YOLO11n, ByteTrack, lane analysis, and Gemma4-E2B in Chrome. Mission mode then asks Gemma for a short JSON action plan, validates the schema, clamps the motion intent, and converts it into V7RC `SRT` frames:
 
 ```text
-Vision source -> YOLO/ByteTrack -> Gemma4-E2B action JSON -> safety controller -> V7RC channel frame -> Web Bluetooth robot link
+Vision source -> YOLO/ByteTrack/lane state -> Gemma4-E2B Mission JSON -> safety controller -> 30ms V7RC SRT/PWM frames -> Web Bluetooth robot link
 ```
+
+Default operation is still safe by design:
+
+- `Suggestion` mode shows proposed commands without driving hardware.
+- `Armed` mode is required before connected BLE output follows the command stream.
+- E-stop latches output to neutral until reset.
+- Invalid or unsafe Mission JSON falls back to neutral command preview.
 
 ## Lane Robustness Technical Evaluation
 

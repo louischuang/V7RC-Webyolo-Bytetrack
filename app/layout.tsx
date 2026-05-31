@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "V7RC WebYOLO ByteTrack",
-  description: "Chrome-local YOLO, ByteTrack, and Gemma4-E2B vision chat.",
+  title: "VLA Testbed",
+  description: "Chrome-local VLA testbed with YOLO, ByteTrack, Gemma4-E2B, and V7RC robot control.",
 };
 
 export default function RootLayout({

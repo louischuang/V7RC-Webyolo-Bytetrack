@@ -287,11 +287,11 @@ Next planning target:
 - [x] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
 - [x] Add first-pass JSON parsing, schema validation, and fallback-to-neutral preview behavior for invalid Gemma output.
 - [x] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
-- [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
+- [x] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
 - [x] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
 - [x] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
 - [x] Display the last mission `message`, including target-visible messages and `任務完成` / `mission complete`.
-- [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
+- [x] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
 - [x] Store goal/control settings in browser local storage.
 
 ## Phase 15 - Task Console And Bird's-Eye View

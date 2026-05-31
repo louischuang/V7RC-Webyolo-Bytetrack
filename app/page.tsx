@@ -69,6 +69,8 @@ type TrackRow = {
   label: string;
   confidence: number;
   ageMs: number;
+  color: TrackColorSample | null;
+  missionTarget: boolean;
 };
 
 type RobotMode = "suggestion" | "armed";
@@ -76,11 +78,19 @@ type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
 type MissionStatus = "running" | "complete" | "blocked" | "unsafe" | "failed";
 type MissionMove = "forward" | "backward" | "left" | "right" | "strafe_left" | "strafe_right" | "turn_left" | "turn_right" | "stop";
+type MissionRoadPolicy = "auto" | "follow" | "ignore";
 type RobotTargetColor = "any" | "red" | "blue" | "green" | "yellow" | "black" | "white";
+type TrackColorName = RobotTargetColor | "unknown";
+type TrackColorSample = {
+  color: TrackColorName;
+  confidence: number;
+  hex: string;
+};
 type SafetyLevel = "clear" | "caution" | "blocked";
 type LlmDevice = "wasm" | "webgpu";
 type NormalizedPoint = { x: number; y: number };
 type RobotGoal = {
+  roadPolicy: MissionRoadPolicy;
   targetObject: string;
   targetColor: RobotTargetColor;
   successCondition: string;
@@ -93,6 +103,7 @@ type MissionAction = {
 };
 type PerceptionState = {
   tracks: Track[];
+  trackColors: Record<string, TrackColorSample>;
   safety: SafetyAssessment;
   laneDetection: LaneDetection | null;
   driveMode: V7rcDriveMode;
@@ -104,11 +115,20 @@ type RobotCommand = {
   pwmUs: number[];
   durationMs: number;
 };
+type ControlLoopMetrics = {
+  gemmaInferenceMs: number | null;
+  commandValidationMs: number | null;
+  bluetoothWriteMs: number | null;
+  commandRateHz: number;
+  commandFrames: number;
+  lastStopReason: string;
+};
 type MissionPlan = {
   version: 1;
   message: string;
   missionStatus: MissionStatus;
   planDurationMs: number;
+  useRoad: boolean | null;
   actions: MissionAction[];
 };
 type MissionActionPreview = {
@@ -276,23 +296,30 @@ const missionFixedPrompt = `請輸出以下 JSON schema：
   "version": 1,
   "message": "短狀態或任務完成",
   "missionStatus": "running | complete | blocked | unsafe | failed",
+  "useRoad": true,
   "planDurationMs": 2000,
   "actions": [
     { "move": "forward | backward | strafe_left | strafe_right | turn_left | turn_right | stop", "ms": 500, "speed": 0.25 }
   ]
 }
-限制：planDurationMs 不可超過 2000；每個 speed 介於 0 到 0.5；若不安全，actions 最後必須是 stop。`;
+限制：planDurationMs 不可超過 2000；每個 speed 介於 0 到 0.5；若不安全，actions 最後必須是 stop。useRoad 表示此輪任務是否要利用道路/車道資訊前進。`;
 
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
 const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
 const robotGoalStorageKey = "v7rc.robot-goal.v1";
 const defaultRobotGoal: RobotGoal = {
-  safetyConstraints: "若前方有人、車輛或障礙物過近，或車道狀態不可用，必須停止。",
+  roadPolicy: "auto",
+  safetyConstraints: "若前方有人、車輛或障礙物過近，或任務路徑不安全，必須停止。道路/車道資訊可用時可參考，但解任務不一定需要道路。",
   successCondition: "走到目標物前方安全距離並停止，message 包含任務完成。",
   targetColor: "red",
   targetObject: "box",
 };
+const missionRoadPolicies: Array<{ id: MissionRoadPolicy; label: string }> = [
+  { id: "auto", label: "Auto LLM" },
+  { id: "follow", label: "Follow Road" },
+  { id: "ignore", label: "Ignore Road" },
+];
 const robotTargetColors: Array<{ id: RobotTargetColor; label: string }> = [
   { id: "any", label: "Any" },
   { id: "red", label: "Red" },
@@ -352,6 +379,7 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const birdViewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const laneDetectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const colorSamplingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -396,6 +424,7 @@ export default function Home() {
   const laneProcessingSamplesRef = useRef<number[]>([]);
   const laneMissedSinceRef = useRef<number | null>(null);
   const laneWasUsableRef = useRef(false);
+  const trackColorSamplesRef = useRef<Record<string, TrackColorSample>>({});
   const [cameraState, setCameraState] = useState<CameraState>("idle");
   const [cameraError, setCameraError] = useState<string>("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -457,6 +486,7 @@ export default function Home() {
   const [missionExecution, setMissionExecution] = useState<MissionExecutionState>(() => createIdleMissionExecution());
   const [robotGoal, setRobotGoal] = useState<RobotGoal>(defaultRobotGoal);
   const [robotGoalHydrated, setRobotGoalHydrated] = useState(false);
+  const [controlLoopMetrics, setControlLoopMetrics] = useState<ControlLoopMetrics>(() => createEmptyControlLoopMetrics());
   const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [safetyAssessment, setSafetyAssessment] = useState<SafetyAssessment>(() => createClearSafetyAssessment());
   const [laneConfidence, setLaneConfidence] = useState(0);
@@ -497,8 +527,12 @@ export default function Home() {
         label: track.label,
         confidence: track.confidence,
         ageMs: track.missed,
+        color: trackColorSamplesRef.current[track.id] ?? null,
+        missionTarget:
+          robotTaskMode === "mission" &&
+          isMissionTargetTrack(track, robotGoal, trackColorSamplesRef.current[track.id] ?? null),
       })),
-    [tracks],
+    [robotGoal, robotTaskMode, tracks],
   );
 
   const robotRuntimeStatus: RuntimeStatus = useMemo(
@@ -516,6 +550,7 @@ export default function Home() {
     () => previewSrtChannels(taskSuggestionIntent, robotDriveMode).slice(0, 4),
     [robotDriveMode, taskSuggestionIntent],
   );
+  const missionRoadState = resolveMissionRoadState(robotGoal.roadPolicy, missionPlan, laneDetectionRef.current);
 
   const robotPacketPreview = useMemo(
     () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(robotIntent, robotDriveMode))),
@@ -568,10 +603,10 @@ export default function Home() {
       const executionText = missionExecution.active
         ? ` Executing action ${missionExecution.actionIndex + 1}/${missionPlan.actions.length}, ${missionExecution.remainingMs} ms left, ${missionExecution.framesSent} SRT frame(s).`
         : " Waiting for the next command slice.";
-      return `Mission plan ${missionPlan.missionStatus}: ${missionPlan.message}. ${missionPlan.actions.length} action(s), ${missionPlan.planDurationMs} ms total.${executionText}`;
+      return `Mission plan ${missionPlan.missionStatus}: ${missionPlan.message}. Road policy ${missionRoadState.label}; current road use ${missionRoadState.useRoadText}. ${missionPlan.actions.length} action(s), ${missionPlan.planDurationMs} ms total.${executionText}`;
     }
 
-    return "Gemma JSON mission planner pending; valid plans are previewed before they are converted into 30ms SRT frames.";
+    return `Gemma JSON mission planner pending; road policy ${missionRoadState.label}. Valid plans are previewed before they are converted into 30ms SRT frames.`;
   }, [
     autopilotSuggestion.autonomy,
     autopilotSuggestion.neutral,
@@ -587,6 +622,8 @@ export default function Home() {
     missionExecution.active,
     missionExecution.framesSent,
     missionExecution.remainingMs,
+    missionRoadState.label,
+    missionRoadState.useRoadText,
     robotTaskMode,
     roiConfidence,
     safetyAssessment.level,
@@ -1025,6 +1062,7 @@ export default function Home() {
     trackerRef.current.reset();
     setTracks([]);
     tracksRef.current = [];
+    trackColorSamplesRef.current = {};
     setFps(0);
   }, []);
 
@@ -1310,11 +1348,12 @@ export default function Home() {
               laneDetection: laneDetectionRef.current,
               safety: safetyAssessment,
               tracks: tracksRef.current,
+              trackColors: trackColorSamplesRef.current,
             },
             missionExecution,
           )
         : fixedPrompt.trim() || defaultFixedPrompt;
-    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current, safetyAssessment) : "";
+    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current, safetyAssessment, trackColorSamplesRef.current) : "";
     const imageDataUrl = includeFrame
       ? captureSourceFrame(
           getActiveSource(sourceSurface, videoRef.current, imageRef.current),
@@ -1342,13 +1381,31 @@ export default function Home() {
       const emptyResponse = !generation.text.trim() || isDegenerateLlmResponse(generation.text);
       const fallbackResponse = emptyResponse ? buildLocalFallbackResponse(sceneSummary, generation.diagnostics) : "";
       const responseText = emptyResponse ? fallbackResponse : generation.text;
+      setControlLoopMetrics((current) => ({
+        ...current,
+        gemmaInferenceMs: elapsedMs,
+      }));
       if (robotTaskMode === "mission") {
+        const validationStartedAt = performance.now();
         const parsedPlan = parseMissionPlanResponse(responseText);
+        const validationMs = performance.now() - validationStartedAt;
+        setControlLoopMetrics((current) => ({
+          ...current,
+          commandValidationMs: validationMs,
+          lastStopReason: parsedPlan.ok ? current.lastStopReason : `invalid mission json: ${parsedPlan.error}`,
+        }));
         if (parsedPlan.ok) {
-          setMissionPlan(parsedPlan.plan);
+          const normalizedPlan = applyMissionRoadPolicy(parsedPlan.plan, robotGoal.roadPolicy);
+          setMissionPlan(normalizedPlan);
           setMissionPlanError("");
-          setRobotTaskMessage(`Mission: ${parsedPlan.plan.message}`);
-          setRobotTaskStatus(missionStatusToTaskStatus(parsedPlan.plan.missionStatus));
+          setRobotTaskMessage(`Mission: ${normalizedPlan.message}`);
+          setRobotTaskStatus(missionStatusToTaskStatus(normalizedPlan.missionStatus));
+          if (normalizedPlan.missionStatus !== "running") {
+            setControlLoopMetrics((current) => ({
+              ...current,
+              lastStopReason: `mission ${normalizedPlan.missionStatus}: ${normalizedPlan.message}`,
+            }));
+          }
         } else {
           setMissionPlan(null);
           setMissionPlanError(parsedPlan.error);
@@ -1551,6 +1608,7 @@ export default function Home() {
     const transport = robotTransportRef.current;
     if (!transport) {
       setRobotStatus((current) => ({ ...current, connected: false, lastMessage: "Robot transport is idle." }));
+      setControlLoopMetrics((current) => ({ ...current, lastStopReason: "robot disconnect requested" }));
       return;
     }
 
@@ -1567,6 +1625,7 @@ export default function Home() {
       robotLimitedIntentRef.current = neutralIntent;
       robotLastIntentUpdateRef.current = performance.now();
       setRobotIntent(neutralIntent);
+      setControlLoopMetrics((current) => ({ ...current, lastStopReason: "robot disconnected" }));
     } catch (error) {
       setRobotError(error instanceof Error ? error.message : "Could not disconnect robot cleanly.");
     }
@@ -1587,6 +1646,7 @@ export default function Home() {
     setSafetyAssessment(createClearSafetyAssessment());
     sendRobotIntent(createNeutralIntent());
     setRobotMode("suggestion");
+    setControlLoopMetrics((current) => ({ ...current, lastStopReason: "manual neutral reset" }));
   }, [sendRobotIntent]);
 
   const sendRobotEmergencyStop = useCallback(() => {
@@ -1606,6 +1666,7 @@ export default function Home() {
     setRobotMode("suggestion");
     setRobotTaskStatus("unsafe");
     setRobotTaskMessage("E-stop 已鎖定。按 Neutral/Reset 後才可重新啟動任務。");
+    setControlLoopMetrics((current) => ({ ...current, lastStopReason: "manual emergency stop" }));
   }, [sendRobotIntent]);
 
   const toggleRobotTask = useCallback(() => {
@@ -1625,6 +1686,7 @@ export default function Home() {
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
       sendRobotIntent(createNeutralIntent());
+      setControlLoopMetrics((current) => ({ ...current, lastStopReason: "task stopped by user" }));
       return;
     }
 
@@ -1632,6 +1694,12 @@ export default function Home() {
     setMissionPlan(null);
     setMissionPlanError("");
     setMissionExecution(createIdleMissionExecution());
+    setControlLoopMetrics((current) => ({
+      ...current,
+      commandFrames: 0,
+      commandRateHz: 0,
+      lastStopReason: "none",
+    }));
     if (robotTaskMode === "autopilot") {
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
@@ -1669,6 +1737,7 @@ export default function Home() {
 
       if (emergencyStopLatched) {
         setMissionExecution(createIdleMissionExecution());
+        setControlLoopMetrics((current) => ({ ...current, lastStopReason: "mission stopped by E-stop latch" }));
         sendRobotIntent(createNeutralIntent());
         return;
       }
@@ -1678,6 +1747,7 @@ export default function Home() {
         setMissionExecution(createIdleMissionExecution());
         setRobotTaskStatus("blocked");
         setRobotTaskMessage(`Mission safety stop: ${safety.reason}`);
+        setControlLoopMetrics((current) => ({ ...current, lastStopReason: `mission safety stop: ${safety.reason}` }));
         sendRobotIntent(createNeutralIntent());
         return;
       }
@@ -1686,6 +1756,12 @@ export default function Home() {
       const command = getMissionActionAtElapsed(missionPlan, elapsedMs);
       if (!command) {
         setMissionExecution(createIdleMissionExecution());
+        setControlLoopMetrics((current) => ({
+          ...current,
+          commandFrames: framesSent,
+          commandRateHz: 0,
+          lastStopReason: "mission command slice complete",
+        }));
         sendRobotIntent(createNeutralIntent());
         return;
       }
@@ -1710,6 +1786,11 @@ export default function Home() {
           framesSent,
           remainingMs: command.remainingMs,
         });
+        setControlLoopMetrics((current) => ({
+          ...current,
+          commandFrames: framesSent,
+          commandRateHz: elapsedMs > 0 ? framesSent / (elapsedMs / 1000) : 0,
+        }));
       }
     };
 
@@ -1744,6 +1825,7 @@ export default function Home() {
         setAutopilotSuggestion(createNeutralIntent());
         setRobotTaskStatus("unsafe");
         setRobotTaskMessage("E-stop 鎖定中，自動駕駛已停止。");
+        setControlLoopMetrics((current) => ({ ...current, lastStopReason: "autopilot stopped by E-stop latch" }));
         sendRobotIntent(createNeutralIntent());
         return;
       }
@@ -1783,11 +1865,21 @@ export default function Home() {
             ? createNeutralIntent()
             : robotIntentRef.current;
         const frame = encodeSrtFrame(intentToSrtPwm(intent, robotDriveModeRef.current));
+        const writeStartedAt = performance.now();
         const status = await transport.write(frame);
+        const writeMs = performance.now() - writeStartedAt;
         const now = performance.now();
         if (now - robotLastStatusUpdateRef.current > 250) {
           robotLastStatusUpdateRef.current = now;
           setRobotStatus(status);
+          setControlLoopMetrics((current) => ({
+            ...current,
+            bluetoothWriteMs: writeMs,
+            lastStopReason:
+              !robotIntentRef.current.neutral && ageMs > robotCommandTimeoutMs
+                ? "command timeout neutral fallback"
+                : current.lastStopReason,
+          }));
         }
       } catch (error) {
         setRobotError(error instanceof Error ? error.message : "Could not send V7RC SRT command.");
@@ -1889,6 +1981,7 @@ export default function Home() {
 
             const trackStartedAt = performance.now();
             const nextTracks = trackerRef.current.update(nextDetections);
+            trackColorSamplesRef.current = sampleTrackColors(source, nextTracks, colorSamplingCanvasRef.current);
             tracksRef.current = nextTracks;
             setTracks(nextTracks);
             setTrackMs(performance.now() - trackStartedAt);
@@ -1958,7 +2051,16 @@ export default function Home() {
           laneDetectionRef.current,
           showLaneDebugArtifacts,
         );
-        drawDetections(context, tracksRef.current, source, rect.width, rect.height, mirrorPreview && sourceMode === "camera");
+        drawDetections(
+          context,
+          tracksRef.current,
+          source,
+          rect.width,
+          rect.height,
+          mirrorPreview && sourceMode === "camera",
+          robotTaskMode === "mission" ? robotGoal : null,
+          trackColorSamplesRef.current,
+        );
         context.restore();
 
         frameCount += 1;
@@ -1975,7 +2077,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, [mirrorPreview, showLaneDebugArtifacts, sourceMode, sourceSurface]);
+  }, [mirrorPreview, robotGoal, robotTaskMode, showLaneDebugArtifacts, sourceMode, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -1997,6 +2099,8 @@ export default function Home() {
           robotTaskStatus,
           source && isSourceReady(source) ? source : null,
           showLaneDebugArtifacts,
+          robotTaskMode === "mission" ? robotGoal : null,
+          trackColorSamplesRef.current,
         );
       }
 
@@ -2005,7 +2109,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paintBirdView);
     return () => cancelAnimationFrame(animationFrame);
-  }, [robotTaskMode, robotTaskStatus, showLaneDebugArtifacts, sourceSurface]);
+  }, [robotGoal, robotTaskMode, robotTaskStatus, showLaneDebugArtifacts, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -2103,7 +2207,7 @@ export default function Home() {
             <Image src="/brand/v7rc-steam-edu.png" alt="V7RC STEAM EDU" width={114} height={43} priority />
           </span>
           <div>
-            <h1>V7RC WebYOLO ByteTrack</h1>
+            <h1>VLA Testbed</h1>
             <p>
               Robot perception loop with camera, detection, tracking, and Gemma4-E2B
               <span className="version-badge">v{appVersion}</span>
@@ -2216,6 +2320,7 @@ export default function Home() {
                   <span>{cameraError || "Select a source and start the local pipeline."}</span>
                 </div>
               ) : null}
+              <canvas className="hidden-source" ref={colorSamplingCanvasRef} aria-hidden="true" />
             </div>
           </div>
 
@@ -2308,6 +2413,12 @@ export default function Home() {
                 <strong>{formatLaneWidth(laneDetectionRef.current?.estimatedLaneWidth)}</strong>
               </div>
               <div>
+                <span>Mission Road</span>
+                <strong title={`${missionRoadState.label}: ${missionRoadState.useRoadText}`}>
+                  {robotTaskMode === "mission" ? missionRoadState.useRoadText : "-"}
+                </strong>
+              </div>
+              <div>
                 <span>Lane Time</span>
                 <strong>{formatDuration(laneProcessingMs)}</strong>
               </div>
@@ -2339,6 +2450,30 @@ export default function Home() {
                 <span>Suggest CH1</span>
                 <strong>{autopilotChannelPreview[1]?.pwmUs ?? 1500} us</strong>
               </div>
+              <div>
+                <span>Gemma Loop</span>
+                <strong>{formatNullableDuration(controlLoopMetrics.gemmaInferenceMs)}</strong>
+              </div>
+              <div>
+                <span>JSON Validate</span>
+                <strong>{formatNullableDuration(controlLoopMetrics.commandValidationMs)}</strong>
+              </div>
+              <div>
+                <span>BLE Write</span>
+                <strong>{formatNullableDuration(controlLoopMetrics.bluetoothWriteMs)}</strong>
+              </div>
+              <div>
+                <span>Cmd Rate</span>
+                <strong>{controlLoopMetrics.commandRateHz.toFixed(1)} Hz</strong>
+              </div>
+              <div>
+                <span>Cmd Frames</span>
+                <strong>{controlLoopMetrics.commandFrames}</strong>
+              </div>
+              <div>
+                <span>Last Stop</span>
+                <strong title={controlLoopMetrics.lastStopReason}>{controlLoopMetrics.lastStopReason}</strong>
+              </div>
             </div>
             <p className="task-detail">{robotTaskDetail}</p>
             {robotTaskMode === "mission" ? (
@@ -2367,6 +2502,22 @@ export default function Home() {
                           </option>
                         ))}
                       </select>
+                    </label>
+                    <label className="mission-road-policy-field">
+                      <span>Road Follow</span>
+                      <div className="segmented-control compact-segmented-control">
+                        {missionRoadPolicies.map((policy) => (
+                          <button
+                            className={robotGoal.roadPolicy === policy.id ? "active" : ""}
+                            key={policy.id}
+                            type="button"
+                            onClick={() => updateRobotGoal({ roadPolicy: policy.id })}
+                          >
+                            {policy.label}
+                          </button>
+                        ))}
+                      </div>
+                      <small>{missionRoadState.label} / {missionRoadState.useRoadText}</small>
                     </label>
                     <label>
                       <span>Success Condition</span>
@@ -2838,18 +2989,22 @@ export default function Home() {
               <span>{trackRows.length}</span>
             </div>
             <div className="table-head">
-              <span>ID</span>
-              <span>Object</span>
-              <span>Conf.</span>
+                <span>ID</span>
+                <span>Object</span>
+                <span>Color / Conf.</span>
             </div>
             {trackRows.length === 0 ? (
               <p className="empty-copy">No active tracks yet.</p>
             ) : (
               trackRows.map((track) => (
-                <div className="track-row" key={track.id}>
+                <div className={track.missionTarget ? "track-row mission-target" : "track-row"} key={track.id}>
                   <span>{track.id}</span>
-                  <span>{track.label}</span>
-                  <span>{track.confidence.toFixed(2)}</span>
+                  <span>{track.label}{track.missionTarget ? " target" : ""}</span>
+                  <span className="track-color-cell">
+                    {track.color ? <i style={{ background: track.color.hex }} aria-hidden="true" /> : null}
+                    {track.color ? `${track.color.color} ` : ""}
+                    {track.confidence.toFixed(2)}
+                  </span>
                 </div>
               ))
             )}
@@ -3004,7 +3159,7 @@ export default function Home() {
           >
             <div className="modal-title">
               <div>
-                <h2 id="help-title">V7RC WebYOLO ByteTrack Help</h2>
+                <h2 id="help-title">VLA Testbed Help</h2>
                 <p className="modal-subtitle">Version {appVersion}</p>
               </div>
               <button
@@ -3023,16 +3178,27 @@ export default function Home() {
             <div className="help-content">
               <section className="help-hero">
                 {/* eslint-disable-next-line @next/next/no-img-element -- Static help screenshot from this local app. */}
-                <img src="/help/v7rc-overview.png" alt="V7RC WebYOLO ByteTrack app overview" />
+                <img src="/help/v7rc-overview.png" alt="VLA Testbed app overview" />
                 <div>
                   <h3>System Overview</h3>
                   <p>
-                    V7RC WebYOLO ByteTrack is a Chrome-first robot perception console. It runs live source
-                    playback, YOLO11n object detection, ByteTrack tracking, lane analysis, bird&apos;s-eye
-                    visualization, local Gemma4-E2B reasoning, and V7RC SRT/PWM robot command previews in the
-                    browser.
+                    VLA Testbed is a browser-based VLA / robot perception-action testbed. It runs live
+                    source playback, YOLO11n object detection, ByteTrack tracking, lane analysis,
+                    bird&apos;s-eye visualization, local Gemma4-E2B reasoning, and V7RC SRT/PWM robot command
+                    previews in Chrome.
                   </p>
                 </div>
+              </section>
+
+              <section className="help-section">
+                <h3>VLA Testbed Scope</h3>
+                <p>
+                  The platform connects Vision, Language, and Action for closed-loop robotics experiments:
+                  camera or stream frames become YOLO/ByteTrack/lane perception state, Gemma4-E2B proposes
+                  structured Mission JSON, and the browser validates that plan into short 30ms V7RC SRT/PWM command
+                  slices. It is an early testbed, not an end-to-end learned motor policy; safety gates keep output in
+                  preview mode until the robot is connected and Armed.
+                </p>
               </section>
 
               <section className="help-section">
@@ -3122,7 +3288,11 @@ export default function Home() {
   );
 }
 
-function buildSceneSummary(tracks: Track[], safety: SafetyAssessment) {
+function buildSceneSummary(
+  tracks: Track[],
+  safety: SafetyAssessment,
+  trackColors: Record<string, TrackColorSample>,
+) {
   const safetyLine = `安全狀態：${safety.level}，${safety.reason}${safety.hazardTrackId ? `，hazard=${safety.hazardTrackId}` : ""}。`;
 
   if (tracks.length === 0) {
@@ -3131,14 +3301,149 @@ function buildSceneSummary(tracks: Track[], safety: SafetyAssessment) {
 
   const objectLines = tracks
     .slice(0, 12)
-    .map((track) => `${track.id}: ${track.label}，信心值 ${track.confidence.toFixed(2)}`)
+    .map((track) => {
+      const color = trackColors[track.id];
+      return `${track.id}: ${track.label}，信心值 ${track.confidence.toFixed(2)}${color ? `，顏色 ${color.color} (${Math.round(color.confidence * 100)}%)` : ""}`;
+    })
     .join("\n");
 
   return `${safetyLine}\n${objectLines}`;
 }
 
+function sampleTrackColors(
+  source: DetectableSource,
+  tracks: Track[],
+  canvas: HTMLCanvasElement | null,
+): Record<string, TrackColorSample> {
+  if (!canvas || tracks.length === 0) {
+    return {};
+  }
+
+  const dimensions = getSourceDimensions(source);
+  if (dimensions.width <= 0 || dimensions.height <= 0) {
+    return {};
+  }
+
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return {};
+  }
+
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  try {
+    context.drawImage(source, 0, 0, dimensions.width, dimensions.height);
+  } catch {
+    return {};
+  }
+
+  const samples: Record<string, TrackColorSample> = {};
+  for (const track of tracks) {
+    const sample = sampleBoxColor(context, track.box, dimensions.width, dimensions.height);
+    if (sample) {
+      samples[track.id] = sample;
+    }
+  }
+
+  return samples;
+}
+
+function sampleBoxColor(
+  context: CanvasRenderingContext2D,
+  box: Track["box"],
+  sourceWidth: number,
+  sourceHeight: number,
+): TrackColorSample | null {
+  const cropWidth = clamp(box.width * 0.58, 4, 96);
+  const cropHeight = clamp(box.height * 0.58, 4, 96);
+  const x = Math.round(clamp(box.x + box.width * 0.21, 0, sourceWidth - 1));
+  const y = Math.round(clamp(box.y + box.height * 0.21, 0, sourceHeight - 1));
+  const width = Math.round(Math.min(cropWidth, sourceWidth - x));
+  const height = Math.round(Math.min(cropHeight, sourceHeight - y));
+  if (width <= 1 || height <= 1) {
+    return null;
+  }
+
+  let imageData: ImageData;
+  try {
+    imageData = context.getImageData(x, y, width, height);
+  } catch {
+    return null;
+  }
+
+  let count = 0;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  const stride = Math.max(1, Math.floor((width * height) / 300));
+  for (let pixel = 0; pixel < width * height; pixel += stride) {
+    const offset = pixel * 4;
+    const alpha = imageData.data[offset + 3];
+    if (alpha < 16) {
+      continue;
+    }
+    red += imageData.data[offset];
+    green += imageData.data[offset + 1];
+    blue += imageData.data[offset + 2];
+    count += 1;
+  }
+
+  if (count === 0) {
+    return null;
+  }
+
+  return classifyAverageColor(red / count, green / count, blue / count);
+}
+
+function classifyAverageColor(red: number, green: number, blue: number): TrackColorSample {
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const brightness = max / 255;
+  const saturation = max === 0 ? 0 : (max - min) / max;
+  let color: TrackColorName = "unknown";
+  let confidence = saturation;
+
+  if (brightness < 0.18) {
+    color = "black";
+    confidence = 1 - brightness;
+  } else if (brightness > 0.72 && saturation < 0.22) {
+    color = "white";
+    confidence = brightness * (1 - saturation);
+  } else if (saturation >= 0.2) {
+    if (red > green * 1.18 && red > blue * 1.18) {
+      color = "red";
+      confidence = clamp((red - Math.max(green, blue)) / 160, 0.25, 1);
+    } else if (blue > red * 1.12 && blue > green * 1.08) {
+      color = "blue";
+      confidence = clamp((blue - Math.max(red, green)) / 150, 0.25, 1);
+    } else if (green > red * 1.08 && green > blue * 1.08) {
+      color = "green";
+      confidence = clamp((green - Math.max(red, blue)) / 140, 0.25, 1);
+    } else if (red > blue * 1.2 && green > blue * 1.2 && Math.abs(red - green) < 90) {
+      color = "yellow";
+      confidence = clamp((Math.min(red, green) - blue) / 150, 0.25, 1);
+    }
+  }
+
+  return {
+    color,
+    confidence: clamp(confidence, 0, 1),
+    hex: rgbToHex(red, green, blue),
+  };
+}
+
+function rgbToHex(red: number, green: number, blue: number) {
+  return `#${[red, green, blue]
+    .map((value) => Math.round(clamp(value, 0, 255)).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
 function sanitizeRobotGoal(goal: Partial<RobotGoal>): RobotGoal {
   return {
+    roadPolicy:
+      typeof goal.roadPolicy === "string" && isMissionRoadPolicy(goal.roadPolicy)
+        ? goal.roadPolicy
+        : defaultRobotGoal.roadPolicy,
     safetyConstraints:
       typeof goal.safetyConstraints === "string" && goal.safetyConstraints.trim()
         ? goal.safetyConstraints.trim()
@@ -3162,6 +3467,75 @@ function isRobotTargetColor(value: string): value is RobotTargetColor {
   return robotTargetColors.some((color) => color.id === value);
 }
 
+function isMissionRoadPolicy(value: string): value is MissionRoadPolicy {
+  return missionRoadPolicies.some((policy) => policy.id === value);
+}
+
+function resolveMissionRoadState(
+  policy: MissionRoadPolicy,
+  plan: MissionPlan | null,
+  laneDetection: LaneDetection | null,
+) {
+  const laneUsable = laneDetection ? isLaneDetectionUsable(laneDetection) : false;
+  const label =
+    policy === "auto"
+      ? "Auto LLM"
+      : policy === "follow"
+        ? "Manual follow"
+        : "Manual ignore";
+  const requestedUseRoad = policy === "auto" ? plan?.useRoad ?? null : policy === "follow";
+  const effectiveUseRoad = requestedUseRoad === true && laneUsable;
+  const useRoadText =
+    requestedUseRoad === null
+      ? "pending"
+      : requestedUseRoad
+        ? laneUsable
+          ? "following road"
+          : "road requested, lane unavailable"
+        : "ignoring road";
+
+  return {
+    effectiveUseRoad,
+    label,
+    laneUsable,
+    requestedUseRoad,
+    useRoadText,
+  };
+}
+
+function applyMissionRoadPolicy(plan: MissionPlan, policy: MissionRoadPolicy): MissionPlan {
+  if (policy === "follow") {
+    return { ...plan, useRoad: true };
+  }
+
+  if (policy === "ignore") {
+    return { ...plan, useRoad: false };
+  }
+
+  return plan;
+}
+
+function normalizeMissionText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function isMissionTargetTrack(track: Pick<Track, "label">, goal: RobotGoal, color: TrackColorSample | null) {
+  const targetObject = normalizeMissionText(goal.targetObject);
+  if (!targetObject) {
+    return false;
+  }
+
+  if (!normalizeMissionText(track.label).includes(targetObject)) {
+    return false;
+  }
+
+  if (goal.targetColor === "any") {
+    return true;
+  }
+
+  return color?.color === goal.targetColor;
+}
+
 function buildMissionPrompt(
   fixedPrompt: string,
   goal: RobotGoal,
@@ -3173,7 +3547,11 @@ function buildMissionPrompt(
       ? "目前沒有追蹤物件。"
       : perception.tracks
           .slice(0, 10)
-          .map((track) => `${track.id}:${track.label}:${track.confidence.toFixed(2)}`)
+          .map((track) => {
+            const color = perception.trackColors[track.id];
+            const targetMark = isMissionTargetTrack(track, goal, color ?? null) ? ":TARGET_MATCH" : "";
+            return `${track.id}:${track.label}:${track.confidence.toFixed(2)}${color ? `:color=${color.color}:${Math.round(color.confidence * 100)}%` : ":color=unknown"}${targetMark}`;
+          })
           .join(", ");
   const laneSummary = perception.laneDetection
     ? `egoLaneId=${perception.laneDetection.egoLaneId ?? 1}, offset=${formatLaneOffset(perception.laneDetection.egoLaneCenterOffset)}, confidence=${Math.round(perception.laneDetection.confidence * 100)}%`
@@ -3187,7 +3565,15 @@ function buildMissionPrompt(
 
 任務目標：
 - targetObject: ${goal.targetObject}
-- targetColor: ${goal.targetColor}
+- targetColor: ${goal.targetColor}${goal.targetColor === "any" ? "（Any 代表接受任何顏色，包含 unknown / 尚未分類的顏色）" : ""}
+- roadPolicy: ${goal.roadPolicy}
+- roadPolicyInstruction: ${
+    goal.roadPolicy === "auto"
+      ? "請由你依照任務、道路可用性與安全狀態決定 useRoad；若要沿道路/車道前進，useRoad=true；若任務需要離開道路尋找目標，useRoad=false。"
+      : goal.roadPolicy === "follow"
+        ? "使用者手動指定要循道路/車道前進；useRoad 必須為 true。"
+        : "使用者手動指定不要循道路/車道；useRoad 必須為 false。"
+  }
 - successCondition: ${goal.successCondition}
 - safetyConstraints: ${goal.safetyConstraints}
 - userInstruction: ${missionInstruction}
@@ -3542,6 +3928,8 @@ function drawBirdsEyeView(
   taskStatus: RobotTaskStatus,
   source: DetectableSource | null,
   showDebugArtifacts: boolean,
+  missionGoal: RobotGoal | null,
+  trackColors: Record<string, TrackColorSample>,
 ) {
   const { width, height } = canvas;
   context.clearRect(0, 0, width, height);
@@ -3608,7 +3996,8 @@ function drawBirdsEyeView(
       topWidth: roadTopWidth,
       topY: roadTopY,
     }, roadCalibration);
-    const color = "#2dd4bf";
+    const isMissionTarget = missionGoal ? isMissionTargetTrack(track, missionGoal, trackColors[track.id] ?? null) : false;
+    const color = isMissionTarget ? "#ef4444" : "#2dd4bf";
     context.fillStyle = color;
     context.strokeStyle = "#020617";
     context.lineWidth = 2;
@@ -4283,6 +4672,7 @@ function parseMissionPlanResponse(response: string): { ok: true; plan: MissionPl
   const planDurationMs = Math.round(
     clamp(Number(parsed.planDurationMs) || actions.reduce((total, action) => total + action.ms, 0), robotCommandIntervalMs, 2000),
   );
+  const useRoad = typeof parsed.useRoad === "boolean" ? parsed.useRoad : null;
   const message = typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : "Mission plan received.";
   const terminalStatuses = new Set<MissionStatus>(["blocked", "unsafe", "failed", "complete"]);
   if (terminalStatuses.has(status) && actions.at(-1)?.move !== "stop") {
@@ -4296,6 +4686,7 @@ function parseMissionPlanResponse(response: string): { ok: true; plan: MissionPl
       message,
       missionStatus: status,
       planDurationMs,
+      useRoad,
       version: 1,
     },
   };
@@ -4329,6 +4720,17 @@ function createIdleMissionExecution(): MissionExecutionState {
     elapsedMs: 0,
     framesSent: 0,
     remainingMs: 0,
+  };
+}
+
+function createEmptyControlLoopMetrics(): ControlLoopMetrics {
+  return {
+    bluetoothWriteMs: null,
+    commandFrames: 0,
+    commandRateHz: 0,
+    commandValidationMs: null,
+    gemmaInferenceMs: null,
+    lastStopReason: "none",
   };
 }
 
@@ -5301,6 +5703,10 @@ function formatDuration(milliseconds: number) {
   return `${(milliseconds / 1000).toFixed(2)} s`;
 }
 
+function formatNullableDuration(milliseconds: number | null) {
+  return milliseconds === null ? "-" : formatDuration(milliseconds);
+}
+
 function formatBenchmarkTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -5389,6 +5795,8 @@ function drawDetections(
   stageWidth: number,
   stageHeight: number,
   mirrorPreview: boolean,
+  missionGoal: RobotGoal | null,
+  trackColors: Record<string, TrackColorSample>,
 ) {
   if (detections.length === 0) {
     return;
@@ -5405,7 +5813,8 @@ function drawDetections(
   const scaleY = drawHeight / dimensions.height;
 
   for (const detection of detections) {
-    const boxColor = "#2dd4bf";
+    const isMissionTarget = missionGoal ? isMissionTargetTrack(detection, missionGoal, trackColors[detection.id] ?? null) : false;
+    const boxColor = isMissionTarget ? "#ef4444" : "#2dd4bf";
     const unmirroredX = offsetX + detection.box.x * scaleX;
     const y = offsetY + detection.box.y * scaleY;
     const width = detection.box.width * scaleX;

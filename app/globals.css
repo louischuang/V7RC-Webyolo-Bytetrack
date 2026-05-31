@@ -586,6 +586,12 @@ input {
   min-height: 60px;
 }
 
+.mission-road-policy-field small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .mission-plan-heading,
 .mission-action-row {
   display: grid;
@@ -947,6 +953,11 @@ input {
   color: #020617;
 }
 
+.compact-segmented-control button {
+  min-height: 28px;
+  font-size: 11px;
+}
+
 .robot-packet {
   display: grid;
   gap: 6px;
@@ -1016,7 +1027,7 @@ input {
 .table-head,
 .track-row {
   display: grid;
-  grid-template-columns: 64px 1fr 72px;
+  grid-template-columns: 56px minmax(0, 1fr) 116px;
   gap: 8px;
   align-items: center;
 }
@@ -1049,6 +1060,35 @@ input {
 .track-row {
   border-top: 1px solid var(--line);
   padding: 10px 12px;
+}
+
+.track-row.mission-target {
+  background: rgba(239, 68, 68, 0.14);
+  box-shadow: inset 3px 0 0 #ef4444;
+}
+
+.track-row.mission-target span:first-child,
+.track-row.mission-target span:nth-child(2) {
+  color: #fecaca;
+  font-weight: 800;
+}
+
+.track-color-cell {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.track-color-cell i {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(238, 242, 247, 0.55);
+  border-radius: 999px;
 }
 
 .empty-copy {
