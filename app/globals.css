@@ -351,6 +351,41 @@ input {
   pointer-events: none;
 }
 
+.camera-overlay-toggle {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 10px;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.72);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.26);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.camera-overlay-toggle.active {
+  border-color: rgba(45, 212, 191, 0.62);
+  background: rgba(20, 184, 166, 0.22);
+  color: #ccfbf1;
+}
+
+.camera-overlay-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .camera-metric-overlay .metric {
   min-width: 76px;
   border-color: rgba(148, 163, 184, 0.34);

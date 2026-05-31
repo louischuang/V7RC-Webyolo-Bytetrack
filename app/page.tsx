@@ -501,6 +501,7 @@ export default function Home() {
   const [filterLaneHeading, setFilterLaneHeading] = useState(laneDetectionDefaultFilterHeading);
   const [inferMissingLane, setInferMissingLane] = useState(laneDetectionDefaultInferMissingLane);
   const [useRobustLaneScoring, setUseRobustLaneScoring] = useState(laneDetectionDefaultUseRobustScoring);
+  const [showLaneOverlay, setShowLaneOverlay] = useState(true);
   const [laneJoinGapY, setLaneJoinGapY] = useState(laneDetectionDefaultJoinGapY);
   const [laneMinPixelScore, setLaneMinPixelScore] = useState(laneDetectionDefaultMinPixelScore);
   const [laneSmoothing, setLaneSmoothing] = useState(laneDetectionDefaultSmoothing);
@@ -2034,23 +2035,25 @@ export default function Home() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.save();
         context.scale(pixelRatio, pixelRatio);
-        drawCameraLaneGuide(
-          context,
-          source,
-          rect.width,
-          rect.height,
-          mirrorPreview && sourceMode === "camera",
-          roadCalibrationRef.current,
-        );
-        drawDetectedLaneLines(
-          context,
-          source,
-          rect.width,
-          rect.height,
-          mirrorPreview && sourceMode === "camera",
-          laneDetectionRef.current,
-          showLaneDebugArtifacts,
-        );
+        if (showLaneOverlay) {
+          drawCameraLaneGuide(
+            context,
+            source,
+            rect.width,
+            rect.height,
+            mirrorPreview && sourceMode === "camera",
+            roadCalibrationRef.current,
+          );
+          drawDetectedLaneLines(
+            context,
+            source,
+            rect.width,
+            rect.height,
+            mirrorPreview && sourceMode === "camera",
+            laneDetectionRef.current,
+            showLaneDebugArtifacts,
+          );
+        }
         drawDetections(
           context,
           tracksRef.current,
@@ -2077,7 +2080,7 @@ export default function Home() {
 
     animationFrame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(animationFrame);
-  }, [mirrorPreview, robotGoal, robotTaskMode, showLaneDebugArtifacts, sourceMode, sourceSurface]);
+  }, [mirrorPreview, robotGoal, robotTaskMode, showLaneDebugArtifacts, showLaneOverlay, sourceMode, sourceSurface]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -2309,6 +2312,31 @@ export default function Home() {
                 }}
               />
               <canvas ref={canvasRef} aria-hidden="true" />
+              <button
+                className={`camera-overlay-toggle ${showLaneOverlay ? "active" : ""}`}
+                type="button"
+                onClick={() => setShowLaneOverlay((current) => !current)}
+                title={showLaneOverlay ? "Hide OpenCV lane overlay and ROI" : "Show OpenCV lane overlay and ROI"}
+                aria-label={showLaneOverlay ? "Hide OpenCV lane overlay and ROI" : "Show OpenCV lane overlay and ROI"}
+                aria-pressed={showLaneOverlay}
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  {showLaneOverlay ? (
+                    <>
+                      <path d="M4 20 9 4" />
+                      <path d="m15 4 5 16" />
+                      <path d="M9 12h6" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M4 20 9 4" />
+                      <path d="m15 4 5 16" />
+                      <path d="M3 3l18 18" />
+                    </>
+                  )}
+                </svg>
+                <span>{showLaneOverlay ? "Lane ROI" : "Lane Off"}</span>
+              </button>
               <div className="camera-metric-overlay" aria-label="Camera performance metrics">
                 <Metric label="FPS" value={fps.toString()} />
                 <Metric label="YOLO" value={`${yoloMs.toFixed(1)} ms`} />
