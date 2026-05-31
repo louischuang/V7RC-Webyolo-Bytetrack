@@ -47,7 +47,7 @@ button {
 
 .top-menu {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(320px, auto) auto;
+  grid-template-columns: minmax(260px, 1fr) minmax(520px, 720px);
   gap: 16px;
   align-items: center;
   border-bottom: 1px solid var(--line);
@@ -58,6 +58,7 @@ button {
 .brand-block,
 .control-strip,
 .metric-strip,
+.top-status-cards,
 .status-title,
 .status-heading,
 .status-actions,
@@ -114,6 +115,18 @@ h2 {
 .brand-block p {
   margin-top: 2px;
   font-size: 12px;
+}
+
+.version-badge {
+  display: inline-flex;
+  margin-left: 8px;
+  color: #99f6e4;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.top-help-button {
+  flex: 0 0 auto;
 }
 
 .source-switch {
@@ -229,6 +242,7 @@ input {
 
 .primary-button,
 .icon-button,
+.bare-icon-button,
 .secondary-button,
 .danger-button,
 .loop-controls button {
@@ -260,7 +274,23 @@ input {
   padding: 0 12px;
 }
 
-.icon-button svg {
+.bare-icon-button {
+  display: inline-grid;
+  min-width: 24px;
+  min-height: 24px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.bare-icon-button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.icon-button svg,
+.bare-icon-button svg {
   width: 17px;
   height: 17px;
   fill: none;
@@ -272,6 +302,7 @@ input {
 
 .primary-button:disabled,
 .icon-button:disabled,
+.bare-icon-button:disabled,
 .secondary-button:disabled,
 .danger-button:disabled,
 .loop-controls button:disabled {
@@ -283,12 +314,52 @@ input {
   gap: 8px;
 }
 
+.top-status-cards {
+  align-items: stretch;
+  justify-content: end;
+  gap: 10px;
+}
+
+.top-status-cards .status-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  align-self: stretch;
+  min-height: 64px;
+  width: min(330px, 100%);
+}
+
 .metric {
   min-width: 88px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   padding: 8px 10px;
+}
+
+.camera-metric-overlay {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.camera-metric-overlay .metric {
+  min-width: 76px;
+  border-color: rgba(148, 163, 184, 0.34);
+  background: rgba(2, 6, 23, 0.72);
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.26);
+  padding: 7px 9px;
+}
+
+.camera-metric-overlay .metric span {
+  font-size: 10px;
+}
+
+.camera-metric-overlay .metric strong {
+  font-size: 13px;
 }
 
 .metric span {
@@ -480,6 +551,10 @@ input {
   padding: 0 12px 12px;
 }
 
+.birdview-summary {
+  margin: -2px 0 0;
+}
+
 .roi-controls {
   display: grid;
   gap: 10px;
@@ -559,6 +634,35 @@ input {
   padding: 12px;
 }
 
+.compact-status-card {
+  position: relative;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.compact-status-card h2 {
+  font-size: 13px;
+}
+
+.compact-status-card p {
+  min-height: 14px;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-status-card .status-progress {
+  position: absolute;
+  right: 10px;
+  bottom: 4px;
+  left: 10px;
+  height: 3px;
+  margin-top: 0;
+}
+
 .status-title {
   justify-content: space-between;
   gap: 8px;
@@ -616,6 +720,11 @@ input {
   min-height: 30px;
   place-items: center;
   padding: 0;
+}
+
+.compact-icon-button.active {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.12);
 }
 
 .camera-source-card {
@@ -733,6 +842,19 @@ input {
   line-height: 1.45;
 }
 
+.suggestion-packet {
+  border-color: rgba(45, 212, 191, 0.28);
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.suggestion-channel-table {
+  border-color: rgba(45, 212, 191, 0.28);
+}
+
+.suggestion-channel-table .robot-channel-row span:last-child {
+  color: #99f6e4;
+}
+
 .robot-channel-table {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -776,6 +898,12 @@ input {
   grid-template-columns: 1fr auto;
   border-bottom: 1px solid var(--line);
   padding: 12px;
+}
+
+.panel-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .panel-heading span {
@@ -927,6 +1055,10 @@ textarea {
   padding: 16px;
 }
 
+.help-modal {
+  width: min(920px, 100%);
+}
+
 .modal-title {
   justify-content: space-between;
   gap: 12px;
@@ -934,6 +1066,63 @@ textarea {
 
 .modal-title h2 {
   font-size: 16px;
+}
+
+.modal-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.help-content {
+  display: grid;
+  gap: 16px;
+}
+
+.help-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.help-hero img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #05070a;
+}
+
+.help-section,
+.help-hero > div {
+  display: grid;
+  gap: 8px;
+}
+
+.help-section h3,
+.help-hero h3 {
+  font-size: 14px;
+}
+
+.help-section p,
+.help-hero p,
+.help-section li {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.help-section ol,
+.help-section ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.help-section strong {
+  color: var(--text);
 }
 
 .settings-source-switch {
@@ -989,6 +1178,10 @@ textarea {
   .side-panel {
     border-left: 0;
     border-top: 1px solid var(--line);
+  }
+
+  .help-hero {
+    grid-template-columns: 1fr;
   }
 
   .video-stage {

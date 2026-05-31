@@ -280,9 +280,9 @@ Next planning target:
 - [ ] Define `RobotGoal`, `PerceptionState`, `GemmaAction`, and `RobotCommand` TypeScript types.
 - [ ] Add a goal editor for target object, target color, success condition, and safety constraints.
 - [ ] Keep suggestion mode as the default: Gemma proposes actions, but hardware control remains gated.
-- [ ] Update Gemma system prompt to require strict mission action-plan JSON.
+- [x] Update Gemma system prompt to require strict mission action-plan JSON in Mission mode.
 - [ ] Use JSON-only prompt instructions in Chinese and reject Markdown responses.
-- [ ] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
+- [x] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
 - [ ] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
 - [ ] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
 - [ ] Add JSON parsing, schema validation, and fallback-to-neutral behavior for invalid Gemma output.
@@ -371,17 +371,18 @@ Next planning target:
 
 ## Phase 17 - Safety Controller
 
-- [ ] Implement a safety layer that can stop the robot without waiting for LLM output.
-- [ ] Convert YOLO/ByteTrack observations into deterministic hazard states.
+- [x] Implement a first-pass safety layer that can stop the robot without waiting for LLM output.
+- [x] Convert YOLO/ByteTrack observations into deterministic hazard states.
 - [ ] Stop or slow down when a person is detected near the path.
+- [x] Add first-pass obstacle distance/size heuristics from bounding boxes and road ROI projection.
+- [ ] Tune person/vehicle near-path stop thresholds with recorded highway and indoor test clips.
 - [ ] Stop when target confidence drops below threshold for multiple frames.
-- [ ] Add obstacle distance/size heuristics from bounding boxes.
 - [ ] Add manual override that immediately disables autonomy and sends neutral.
-- [ ] Add command timeout watchdog.
-- [ ] Add max-speed, max-turn, and max-strafe limits by drive mode.
-- [ ] Add slew-rate limiting for all motion channels.
-- [ ] Add explicit armed/autonomy gate before non-neutral commands can reach hardware.
-- [ ] Add emergency stop state that requires user reset.
+- [x] Add command timeout watchdog that falls back to neutral when non-neutral commands are stale.
+- [x] Add first-pass max-speed, max-turn, and max-strafe limits for robot motion output.
+- [x] Add first-pass slew-rate limiting for drive motion channels.
+- [x] Add explicit armed/autonomy gate before non-neutral commands can reach hardware.
+- [x] Add emergency stop state that requires user reset.
 
 ## Phase 18 - Closed-Loop Goal Execution
 

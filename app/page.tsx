@@ -2,6 +2,7 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type Hls from "hls.js";
+import packageInfo from "../package.json";
 import { ByteTracker, type Track } from "./lib/bytetrack";
 import { BrowserLlm, type BrowserLlmMessage, type BrowserLlmStatus, getWebGpuStatus } from "./lib/browser-llm";
 import {
@@ -60,6 +61,8 @@ type RuntimeStatus = {
   detail: string;
 };
 
+const appVersion = packageInfo.version;
+
 type TrackRow = {
   id: string;
   label: string;
@@ -70,8 +73,15 @@ type TrackRow = {
 type RobotMode = "suggestion" | "armed";
 type RobotTaskMode = "autopilot" | "mission";
 type RobotTaskStatus = "idle" | "running" | "complete" | "blocked" | "unsafe" | "error";
+type SafetyLevel = "clear" | "caution" | "blocked";
 type LlmDevice = "wasm" | "webgpu";
 type NormalizedPoint = { x: number; y: number };
+type SafetyAssessment = {
+  hazardTrackId: string | null;
+  level: SafetyLevel;
+  reason: string;
+  score: number;
+};
 type RoadCalibration = {
   bottomLeftX: number;
   bottomRightX: number;
@@ -84,6 +94,7 @@ type LaneBand = {
   birdLeft: NormalizedPoint[];
   birdRight: NormalizedPoint[];
   inferred?: boolean;
+  laneId?: number;
   sourceLeft: NormalizedPoint[];
   sourceRight: NormalizedPoint[];
 };
@@ -91,11 +102,13 @@ type EgoLaneEstimate = {
   centerOffset: number;
   heading: number;
   index: number;
+  laneId: number;
 };
 type LaneDetection = {
   birdPaths: NormalizedPoint[][];
   egoLaneCenterOffset: number | null;
   egoLaneHeading: number | null;
+  egoLaneId: number | null;
   egoLaneIndex: number | null;
   estimatedLaneWidth: number | null;
   inferMissingLane: boolean;
@@ -159,6 +172,7 @@ type LaneBenchmarkSnapshot = {
   result: {
     egoLaneCenterOffset: number | null;
     egoLaneHeading: number | null;
+    egoLaneId: number | null;
     egoLaneIndex: number | null;
     estimatedLaneWidth: number | null;
     laneBandCount: number;
@@ -206,6 +220,21 @@ const defaultSystemPrompt =
 const defaultFixedPrompt =
   "請專注於可通行空間、附近的人或障礙物、正在追蹤的物件 ID，以及任何與移動安全相關的風險。";
 
+const missionSystemPrompt =
+  "你是機器人的任務規劃器。請根據目前影像、YOLO11n 物件、ByteTrack ID、鳥瞰圖與任務目標，只輸出一個 JSON，不要輸出 Markdown。每次輸出最多約 2 秒的短動作計畫。若任務完成，message 必須包含「任務完成」或「mission complete」。";
+
+const missionFixedPrompt = `請輸出以下 JSON schema：
+{
+  "version": 1,
+  "message": "短狀態或任務完成",
+  "missionStatus": "running | complete | blocked | unsafe | failed",
+  "planDurationMs": 2000,
+  "actions": [
+    { "move": "forward | backward | left | right | turn_left | turn_right | stop", "ms": 500, "speed": 0.25 }
+  ]
+}
+限制：planDurationMs 不可超過 2000；每個 speed 介於 0 到 0.5；若不安全，actions 最後必須是 stop。`;
+
 const gemmaSettingsStorageKey = "v7rc.gemma4-e2b.settings.v1";
 const birdViewSettingsStorageKey = "v7rc.bird-view.settings.v1";
 const laneBenchmarkStorageKey = "v7rc.lane-benchmark.history.v1";
@@ -225,6 +254,16 @@ const robotTaskModes: Array<{ id: RobotTaskMode; label: string }> = [
   { id: "mission", label: "解任務" },
 ];
 const robotCommandIntervalMs = 30;
+const robotCommandTimeoutMs = 750;
+const robotSafetyLimits = {
+  maxLinear: 1,
+  maxStrafe: 0.45,
+  maxTurn: 0.65,
+  maxSpeedScale: 0.5,
+  maxLinearChangePerSecond: 0.9,
+  maxStrafeChangePerSecond: 0.9,
+  maxTurnChangePerSecond: 1.2,
+} as const;
 const laneDetectionIntervalMs = 140;
 const birdViewDefaultTopY = 0.65;
 const birdViewDefaultTopCenterX = 0.5;
@@ -259,6 +298,8 @@ export default function Home() {
   const robotDriveModeRef = useRef<V7rcDriveMode>("vehicle");
   const robotWriteInFlightRef = useRef(false);
   const robotLastStatusUpdateRef = useRef(0);
+  const robotLastIntentUpdateRef = useRef(0);
+  const robotLimitedIntentRef = useRef<V7rcRobotIntent>(createNeutralIntent());
   const laneDetectionRef = useRef<LaneDetection | null>(null);
   const roadCalibrationRef = useRef<RoadCalibration>(
     createManualRoadCalibration(
@@ -327,6 +368,8 @@ export default function Home() {
   const [responseCount, setResponseCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [cameraSettingsOpen, setCameraSettingsOpen] = useState(false);
+  const [birdViewControlsOpen, setBirdViewControlsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [birdViewSettingsHydrated, setBirdViewSettingsHydrated] = useState(false);
   const [robotMode, setRobotMode] = useState<RobotMode>("suggestion");
@@ -339,11 +382,13 @@ export default function Home() {
   });
   const [robotError, setRobotError] = useState("");
   const [robotIntent, setRobotIntent] = useState<V7rcRobotIntent>(() => createNeutralIntent());
+  const [emergencyStopLatched, setEmergencyStopLatched] = useState(false);
   const [robotDriveMode, setRobotDriveMode] = useState<V7rcDriveMode>("vehicle");
   const [robotTaskMode, setRobotTaskMode] = useState<RobotTaskMode>("autopilot");
   const [robotTaskStatus, setRobotTaskStatus] = useState<RobotTaskStatus>("idle");
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
   const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
+  const [safetyAssessment, setSafetyAssessment] = useState<SafetyAssessment>(() => createClearSafetyAssessment());
   const [laneConfidence, setLaneConfidence] = useState(0);
   const [roiTopY, setRoiTopY] = useState(birdViewDefaultTopY);
   const [roiTopCenterX, setRoiTopCenterX] = useState(birdViewDefaultTopCenterX);
@@ -388,16 +433,16 @@ export default function Home() {
 
   const robotRuntimeStatus: RuntimeStatus = useMemo(
     () => ({
-      detail: robotError || `${robotStatus.deviceName} / ${robotStatus.lastMessage}`,
+      detail: emergencyStopLatched ? `${robotStatus.deviceName} / E-stop latched; reset required.` : robotError || `${robotStatus.deviceName} / ${robotStatus.lastMessage}`,
       label: "Robot / V7RC",
-      state: robotError ? "error" : robotStatus.connected ? "ready" : "idle",
+      state: emergencyStopLatched || robotError ? "error" : robotStatus.connected ? "ready" : "idle",
     }),
-    [robotError, robotStatus],
+    [emergencyStopLatched, robotError, robotStatus],
   );
 
   const robotChannelPreview = useMemo(() => previewSrtChannels(robotIntent, robotDriveMode).slice(0, 4), [robotDriveMode, robotIntent]);
   const autopilotChannelPreview = useMemo(
-    () => previewSrtChannels(autopilotSuggestion, robotDriveMode).slice(0, 2),
+    () => previewSrtChannels(autopilotSuggestion, robotDriveMode).slice(0, 4),
     [autopilotSuggestion, robotDriveMode],
   );
 
@@ -405,22 +450,31 @@ export default function Home() {
     () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(robotIntent, robotDriveMode))),
     [robotDriveMode, robotIntent],
   );
+  const autopilotPacketPreview = useMemo(
+    () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(autopilotSuggestion, robotDriveMode))),
+    [autopilotSuggestion, robotDriveMode],
+  );
   const robotTaskRunning = robotTaskStatus === "running";
   const robotTaskDetail = useMemo(() => {
     if (robotTaskMode === "autopilot") {
+      const egoLaneId = laneDetectionRef.current?.egoLaneId;
       const offset = laneDetectionRef.current?.egoLaneCenterOffset;
-      const laneText = typeof offset === "number" ? ` Ego lane offset ${formatSignedNumber(offset)}.` : " Ego lane pending.";
+      const laneText =
+        typeof offset === "number"
+          ? ` Ego lane ID ${egoLaneId ?? 1}, offset ${formatSignedNumber(offset)}.`
+          : " Ego lane ID 1 pending.";
       const suggestionText =
         autopilotSuggestion.neutral || !autopilotSuggestion.autonomy
           ? " Suggested command: neutral."
           : ` Suggested command: ${Math.round(autopilotSuggestion.speedScale * 100)}% forward, turn ${formatSignedNumber(autopilotSuggestion.turn)}.`;
+      const safetyText = ` Safety ${safetyAssessment.level}: ${safetyAssessment.reason}.`;
       const modeText = [
         useRobustLaneScoring ? "robust" : "legacy",
         filterLaneArtifacts ? "artifact-filter" : "no-artifact-filter",
         filterLaneHeading ? "heading-filter" : "no-heading-filter",
         inferMissingLane ? "infer-lane" : "no-infer-lane",
       ].join(" / ");
-      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}${suggestionText}`;
+      return `Lane candidate detector active (${Math.round(laneConfidence * 100)}%). Manual ROI confidence ${Math.round(roiConfidence * 100)}%. ${modeText}.${laneText}${suggestionText}${safetyText}`;
     }
 
     return "Gemma JSON mission planner pending; controller will expand plans into 30ms SRT frames.";
@@ -435,6 +489,8 @@ export default function Home() {
     laneConfidence,
     robotTaskMode,
     roiConfidence,
+    safetyAssessment.level,
+    safetyAssessment.reason,
     useRobustLaneScoring,
   ]);
   const selectedCamera = useMemo(
@@ -540,6 +596,7 @@ export default function Home() {
       result: {
         egoLaneCenterOffset: laneDetection?.egoLaneCenterOffset ?? null,
         egoLaneHeading: laneDetection?.egoLaneHeading ?? null,
+        egoLaneId: laneDetection?.egoLaneId ?? null,
         egoLaneIndex: laneDetection?.egoLaneIndex ?? null,
         estimatedLaneWidth: laneDetection?.estimatedLaneWidth ?? null,
         laneBandCount: laneDetection?.laneBands.length ?? 0,
@@ -1106,8 +1163,11 @@ export default function Home() {
       return;
     }
 
-    const prompt = fixedPrompt.trim() || defaultFixedPrompt;
-    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current) : "";
+    const prompt =
+      robotTaskMode === "mission"
+        ? `${missionFixedPrompt}\n\n任務目標：${fixedPrompt.trim() || "尋找目標並保持安全。"}`
+        : fixedPrompt.trim() || defaultFixedPrompt;
+    const sceneSummary = includeFrame ? buildSceneSummary(tracksRef.current, safetyAssessment) : "";
     const imageDataUrl = includeFrame
       ? captureSourceFrame(
           getActiveSource(sourceSurface, videoRef.current, imageRef.current),
@@ -1116,8 +1176,9 @@ export default function Home() {
         )
       : undefined;
     const userMessage = buildGemmaUserPrompt(prompt, sceneSummary, true);
+    const activeSystemPrompt = robotTaskMode === "mission" ? missionSystemPrompt : systemPrompt.trim();
     const nextMessages: BrowserLlmMessage[] = [
-      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt.trim() }] : []),
+      ...(activeSystemPrompt ? [{ role: "system" as const, content: activeSystemPrompt }] : []),
       { role: "user", content: userMessage },
     ];
     const startedAt = performance.now();
@@ -1159,7 +1220,7 @@ export default function Home() {
         }, runtimeDefaults.llmLoopDelayMs);
       }
     }
-  }, [fixedPrompt, includeFrame, sourceSurface, systemPrompt]);
+  }, [fixedPrompt, includeFrame, robotTaskMode, safetyAssessment, sourceSurface, systemPrompt]);
 
   useEffect(() => {
     runInferenceRoundRef.current = runInferenceRound;
@@ -1335,7 +1396,11 @@ export default function Home() {
       setRobotStatus(await transport.disconnect());
       robotTransportRef.current = null;
       setRobotMode("suggestion");
-      setRobotIntent(createNeutralIntent());
+      setEmergencyStopLatched(false);
+      const neutralIntent = createNeutralIntent();
+      robotLimitedIntentRef.current = neutralIntent;
+      robotLastIntentUpdateRef.current = performance.now();
+      setRobotIntent(neutralIntent);
     } catch (error) {
       setRobotError(error instanceof Error ? error.message : "Could not disconnect robot cleanly.");
     }
@@ -1343,30 +1408,53 @@ export default function Home() {
 
   const sendRobotIntent = useCallback((intent: V7rcRobotIntent) => {
     setRobotError("");
-    setRobotIntent(intent);
+    const now = performance.now();
+    const safeIntent = applyRobotSafetyLimits(intent, robotLimitedIntentRef.current, now - robotLastIntentUpdateRef.current);
+    robotLimitedIntentRef.current = safeIntent;
+    robotLastIntentUpdateRef.current = now;
+    setRobotIntent(safeIntent);
   }, []);
 
   const sendRobotNeutral = useCallback(() => {
+    setEmergencyStopLatched(false);
     setAutopilotSuggestion(createNeutralIntent());
+    setSafetyAssessment(createClearSafetyAssessment());
     sendRobotIntent(createNeutralIntent());
     setRobotMode("suggestion");
   }, [sendRobotIntent]);
 
   const sendRobotEmergencyStop = useCallback(() => {
+    setEmergencyStopLatched(true);
     setAutopilotSuggestion(createNeutralIntent());
+    setSafetyAssessment({
+      hazardTrackId: null,
+      level: "blocked",
+      reason: "manual emergency stop",
+      score: 1,
+    });
     sendRobotIntent({
       ...createNeutralIntent(),
       emergencyStop: true,
       neutral: true,
     });
     setRobotMode("suggestion");
+    setRobotTaskStatus("unsafe");
+    setRobotTaskMessage("E-stop 已鎖定。按 Neutral/Reset 後才可重新啟動任務。");
   }, [sendRobotIntent]);
 
   const toggleRobotTask = useCallback(() => {
+    if (emergencyStopLatched) {
+      setRobotTaskStatus("unsafe");
+      setRobotTaskMessage("E-stop 鎖定中，請先按 Neutral/Reset。");
+      sendRobotIntent(createNeutralIntent());
+      return;
+    }
+
     if (robotTaskStatus === "running") {
       setRobotTaskStatus("idle");
       setRobotTaskMessage("任務已停止，等待下一次 Start。");
       setAutopilotSuggestion(createNeutralIntent());
+      setSafetyAssessment(createClearSafetyAssessment());
       sendRobotIntent(createNeutralIntent());
       return;
     }
@@ -1374,21 +1462,39 @@ export default function Home() {
     setRobotTaskStatus("running");
     if (robotTaskMode === "autopilot") {
       setAutopilotSuggestion(createNeutralIntent());
+      setSafetyAssessment(createClearSafetyAssessment());
       sendRobotIntent(createNeutralIntent());
       setRobotTaskMessage("自動駕駛啟動：等待車道線與 YOLO 安全狀態。");
       return;
     }
 
     setRobotTaskMessage("解任務啟動：等待 Gemma 產生短 JSON 動作計畫。");
-  }, [robotTaskMode, robotTaskStatus, sendRobotIntent]);
+  }, [emergencyStopLatched, robotTaskMode, robotTaskStatus, sendRobotIntent]);
 
   const applyAutopilotLaneDecision = useCallback(
-    (detection: LaneDetection | null, laneUsable: boolean) => {
+    (detection: LaneDetection | null, laneUsable: boolean, safety: SafetyAssessment) => {
       if (robotTaskMode !== "autopilot" || robotTaskStatus !== "running") {
         return;
       }
 
-      const decision = createAutopilotLaneDecision(detection, laneUsable);
+      if (emergencyStopLatched) {
+        const latchedSafety: SafetyAssessment = {
+          hazardTrackId: null,
+          level: "blocked",
+          reason: "E-stop latched",
+          score: 1,
+        };
+        setSafetyAssessment(latchedSafety);
+        setAutopilotSuggestion(createNeutralIntent());
+        setRobotTaskStatus("unsafe");
+        setRobotTaskMessage("E-stop 鎖定中，自動駕駛已停止。");
+        sendRobotIntent(createNeutralIntent());
+        return;
+      }
+
+      setSafetyAssessment(safety);
+
+      const decision = createAutopilotLaneDecision(detection, laneUsable, safety);
       setAutopilotSuggestion(decision.intent);
       setRobotTaskMessage(decision.message);
 
@@ -1399,7 +1505,7 @@ export default function Home() {
 
       sendRobotIntent(createNeutralIntent());
     },
-    [robotMode, robotStatus.connected, robotTaskMode, robotTaskStatus, sendRobotIntent],
+    [emergencyStopLatched, robotMode, robotStatus.connected, robotTaskMode, robotTaskStatus, sendRobotIntent],
   );
 
   useEffect(() => {
@@ -1415,7 +1521,12 @@ export default function Home() {
 
       robotWriteInFlightRef.current = true;
       try {
-        const frame = encodeSrtFrame(intentToSrtPwm(robotIntentRef.current, robotDriveModeRef.current));
+        const ageMs = performance.now() - robotLastIntentUpdateRef.current;
+        const intent =
+          !robotIntentRef.current.neutral && ageMs > robotCommandTimeoutMs
+            ? createNeutralIntent()
+            : robotIntentRef.current;
+        const frame = encodeSrtFrame(intentToSrtPwm(intent, robotDriveModeRef.current));
         const status = await transport.write(frame);
         const now = performance.now();
         if (now - robotLastStatusUpdateRef.current > 250) {
@@ -1664,6 +1775,7 @@ export default function Home() {
           const laneElapsed = performance.now() - laneStart;
           const nextLaneAverage = pushRollingSample(laneProcessingSamplesRef.current, laneElapsed, 20);
           const laneUsable = isLaneDetectionUsable(nextDetection);
+          const safety = assessAutopilotSafety(tracksRef.current, getSourceDimensions(source), roadCalibrationRef.current);
           if (laneUsable) {
             laneMissedSinceRef.current = null;
           } else {
@@ -1682,7 +1794,7 @@ export default function Home() {
             setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(laneElapsed);
             setRoiConfidence(nextDetection.roiConfidence);
-            applyAutopilotLaneDecision(nextDetection, laneUsable);
+            applyAutopilotLaneDecision(nextDetection, laneUsable, safety);
           }
         } else {
           laneDetectionRef.current = null;
@@ -1698,7 +1810,7 @@ export default function Home() {
             setLaneMissedMs(laneMissedSinceRef.current === null ? 0 : now - laneMissedSinceRef.current);
             setLaneProcessingMs(0);
             setRoiConfidence(0);
-            applyAutopilotLaneDecision(null, false);
+            applyAutopilotLaneDecision(null, false, createClearSafetyAssessment());
           }
         }
 
@@ -1734,14 +1846,81 @@ export default function Home() {
           <span className="brand-mark">V7</span>
           <div>
             <h1>V7RC WebYOLO ByteTrack</h1>
-            <p>Robot perception loop with camera, detection, tracking, and Gemma4-E2B</p>
+            <p>
+              Robot perception loop with camera, detection, tracking, and Gemma4-E2B
+              <span className="version-badge">v{appVersion}</span>
+            </p>
           </div>
+          <button
+            className="icon-button compact-icon-button top-help-button"
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            title="Open help"
+            aria-label="Open help"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 18h.01" />
+              <path d="M9.1 9a3 3 0 1 1 4.8 2.4c-.9.6-1.4 1.2-1.4 2.1" />
+              <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z" />
+            </svg>
+          </button>
         </div>
 
-        <div className="metric-strip">
-          <Metric label="FPS" value={fps.toString()} />
-          <Metric label="YOLO" value={`${yoloMs.toFixed(1)} ms`} />
-          <Metric label="ByteTrack" value={`${trackMs.toFixed(1)} ms`} />
+        <div className="top-status-cards">
+          <StatusCard status={yoloStatus} compact />
+          <StatusCard
+            compact
+            status={llmStatus}
+            action={
+              <div className="status-actions">
+                <button
+                  className="bare-icon-button"
+                  type="button"
+                  onClick={loadGemma}
+                  disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
+                  title={llmState === "ready" || llmState === "generating" ? "Gemma loaded" : "Load Gemma"}
+                  aria-label={llmState === "ready" || llmState === "generating" ? "Gemma loaded" : "Load Gemma"}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
+                  </svg>
+                </button>
+                <button
+                  className="bare-icon-button"
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  title="Gemma settings"
+                  aria-label="Gemma settings"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
+                    <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
+                  </svg>
+                </button>
+                <button
+                  className="bare-icon-button"
+                  type="button"
+                  onClick={toggleInferenceLoop}
+                  disabled={llmState === "loading"}
+                  title={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
+                  aria-label={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
+                >
+                  {loopRunning ? (
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M8 8h8v8H8z" />
+                    </svg>
+                  ) : (
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="m8 5 11 7-11 7V5z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            }
+            progress={llmProgress}
+          />
         </div>
       </header>
 
@@ -1768,6 +1947,11 @@ export default function Home() {
                 }}
               />
               <canvas ref={canvasRef} aria-hidden="true" />
+              <div className="camera-metric-overlay" aria-label="Camera performance metrics">
+                <Metric label="FPS" value={fps.toString()} />
+                <Metric label="YOLO" value={`${yoloMs.toFixed(1)} ms`} />
+                <Metric label="ByteTrack" value={`${trackMs.toFixed(1)} ms`} />
+              </div>
               {cameraState !== "streaming" ? (
                 <div className="stage-empty">
                   <strong>{cameraState === "requesting" ? `Requesting ${sourceMode}` : `${sourceMode.toUpperCase()} idle`}</strong>
@@ -1828,6 +2012,8 @@ export default function Home() {
                   onClick={() => {
                     setRobotTaskMode(mode.id);
                     setRobotTaskStatus("idle");
+                    setAutopilotSuggestion(createNeutralIntent());
+                    setSafetyAssessment(createClearSafetyAssessment());
                     setRobotTaskMessage(mode.id === "autopilot" ? "自動駕駛待命。" : "解任務待命。");
                   }}
                 >
@@ -1853,6 +2039,10 @@ export default function Home() {
                 <strong>{formatLaneOffset(laneDetectionRef.current?.egoLaneCenterOffset)}</strong>
               </div>
               <div>
+                <span>Ego Lane ID</span>
+                <strong>{laneDetectionRef.current?.egoLaneId ?? "-"}</strong>
+              </div>
+              <div>
                 <span>Lane Width</span>
                 <strong>{formatLaneWidth(laneDetectionRef.current?.estimatedLaneWidth)}</strong>
               </div>
@@ -1873,6 +2063,14 @@ export default function Home() {
                 <strong>{laneDropCount}</strong>
               </div>
               <div>
+                <span>Safety</span>
+                <strong>{safetyAssessment.level.toUpperCase()}</strong>
+              </div>
+              <div>
+                <span>Hazard</span>
+                <strong>{safetyAssessment.hazardTrackId ?? "none"}</strong>
+              </div>
+              <div>
                 <span>Suggest CH0</span>
                 <strong>{autopilotChannelPreview[0]?.pwmUs ?? 1500} us</strong>
               </div>
@@ -1887,7 +2085,21 @@ export default function Home() {
           <section className="birdview-card">
             <div className="panel-heading">
               <h2>Bird&apos;s-Eye View</h2>
-              <span>{tracksRef.current.length}</span>
+              <div className="panel-heading-actions">
+                <span>{tracksRef.current.length}</span>
+                <button
+                  className={`icon-button compact-icon-button ${birdViewControlsOpen ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setBirdViewControlsOpen((open) => !open)}
+                  title={birdViewControlsOpen ? "Collapse bird-view controls" : "Expand bird-view controls"}
+                  aria-label={birdViewControlsOpen ? "Collapse bird-view controls" : "Expand bird-view controls"}
+                  aria-expanded={birdViewControlsOpen}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    {birdViewControlsOpen ? <path d="m18 15-6-6-6 6" /> : <path d="m6 9 6 6 6-6" />}
+                  </svg>
+                </button>
+              </div>
             </div>
             <div className="birdview-stage">
               <canvas
@@ -1898,19 +2110,21 @@ export default function Home() {
                 aria-label="Bird's-eye view"
               />
             </div>
-            <div className="roi-controls" aria-label="Bird's-eye ROI controls">
-              <label>
-                <span>View Height</span>
-                <input
-                  type="range"
-                  min="1"
-                  max="2"
-                  step="0.05"
-                  value={birdViewHeightScale}
-                  onChange={(event) => setBirdViewHeightScale(Number(event.target.value))}
-                />
-                <strong>{birdViewHeightScale.toFixed(2)}</strong>
-              </label>
+            {birdViewControlsOpen ? (
+              <>
+                <div className="roi-controls" aria-label="Bird's-eye ROI controls">
+                  <label>
+                    <span>View Height</span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="2"
+                      step="0.05"
+                      value={birdViewHeightScale}
+                      onChange={(event) => setBirdViewHeightScale(Number(event.target.value))}
+                    />
+                    <strong>{birdViewHeightScale.toFixed(2)}</strong>
+                  </label>
               <label>
                 <span>Top Y</span>
                 <input
@@ -2123,7 +2337,14 @@ export default function Home() {
                 ))}
               </div>
             ) : null}
-            <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
+                <p>YOLO/ByteTrack objects use box bottom-center projection. Manual ROI controls the bird-view road transform.</p>
+              </>
+            ) : (
+              <p className="birdview-summary">
+                ROI {Math.round(roiConfidence * 100)}% / lane ID {laneDetectionRef.current?.egoLaneId ?? "-"} /{" "}
+                {showLaneDebugArtifacts ? "debug on" : "debug off"}
+              </p>
+            )}
           </section>
         </aside>
 
@@ -2167,53 +2388,6 @@ export default function Home() {
               ) : null}
             </div>
           </div>
-          <StatusCard status={yoloStatus} />
-          <StatusCard
-            status={llmStatus}
-            action={
-              <div className="status-actions">
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={loadGemma}
-                  disabled={llmState === "loading" || llmState === "generating" || llmState === "ready"}
-                >
-                  {llmState === "ready" || llmState === "generating" ? "Loaded" : "Load"}
-                </button>
-                <button
-                  className="icon-button compact-icon-button"
-                  type="button"
-                  onClick={() => setSettingsOpen(true)}
-                  title="Gemma settings"
-                  aria-label="Gemma settings"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24">
-                    <path d="M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2Z" />
-                    <path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.7 7.7 0 0 0-2.6-1.5L14 2.4h-4L9.6 5a7.7 7.7 0 0 0-2.6 1.5l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.7 7.7 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.7 7.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z" />
-                  </svg>
-                </button>
-                <button
-                  className="icon-button compact-icon-button"
-                  type="button"
-                  onClick={toggleInferenceLoop}
-                  disabled={llmState === "loading"}
-                  title={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
-                  aria-label={loopRunning ? "Stop Gemma loop" : "Start Gemma loop"}
-                >
-                  {loopRunning ? (
-                    <svg aria-hidden="true" viewBox="0 0 24 24">
-                      <path d="M8 8h8v8H8z" />
-                    </svg>
-                  ) : (
-                    <svg aria-hidden="true" viewBox="0 0 24 24">
-                      <path d="m8 5 11 7-11 7V5z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            }
-            progress={llmProgress}
-          />
           <div className="robot-card">
             <StatusCard
               status={robotRuntimeStatus}
@@ -2246,15 +2420,15 @@ export default function Home() {
                   onChange={(event) => {
                     const nextArmed = event.target.checked;
                     setRobotMode(nextArmed ? "armed" : "suggestion");
-                    setRobotIntent((current) => ({
-                      ...current,
+                    sendRobotIntent({
+                      ...robotIntentRef.current,
                       autonomy: nextArmed,
                       emergencyStop: false,
-                      neutral: !nextArmed,
-                      speedScale: nextArmed ? Math.max(current.speedScale, 0.25) : 0,
-                    }));
+                      neutral: true,
+                      speedScale: 0,
+                    });
                   }}
-                  disabled={!robotStatus.connected}
+                  disabled={!robotStatus.connected || emergencyStopLatched}
                 />
                 <span>{robotMode === "armed" ? "Armed" : "Suggestion"}</span>
               </label>
@@ -2264,7 +2438,7 @@ export default function Home() {
                 onClick={() => sendRobotNeutral()}
                 disabled={!robotStatus.connected}
               >
-                Neutral
+                {emergencyStopLatched ? "Reset" : "Neutral"}
               </button>
               <button
                 className="danger-button compact-button"
@@ -2299,8 +2473,21 @@ export default function Home() {
               </div>
               <small>BLE connected 後每 {robotCommandIntervalMs}ms 以 SRT 格式送出目前 Channel 狀態。</small>
             </div>
+            <div className="robot-packet suggestion-packet">
+              <span>Autopilot suggestion</span>
+              <code>{autopilotPacketPreview}</code>
+            </div>
+            <div className="robot-channel-table suggestion-channel-table">
+              {autopilotChannelPreview.map((channel) => (
+                <div className="robot-channel-row" key={channel.index}>
+                  <span>CH{channel.index}</span>
+                  <span>{channel.logical}</span>
+                  <span>{channel.pwmUs} us</span>
+                </div>
+              ))}
+            </div>
             <div className="robot-packet">
-              <span>SRT preview</span>
+              <span>Actual SRT output</span>
               <code>{robotStatus.lastPacket || robotPacketPreview}</code>
             </div>
             <div className="robot-channel-table">
@@ -2474,6 +2661,84 @@ export default function Home() {
         </div>
       ) : null}
 
+      {helpOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setHelpOpen(false)}>
+          <div
+            aria-labelledby="help-title"
+            className="settings-modal help-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-title">
+              <div>
+                <h2 id="help-title">V7RC WebYOLO ByteTrack Help</h2>
+                <p className="modal-subtitle">Version {appVersion}</p>
+              </div>
+              <button
+                className="icon-button compact-icon-button"
+                type="button"
+                onClick={() => setHelpOpen(false)}
+                title="Close help"
+                aria-label="Close help"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24">
+                  <path d="m6 6 12 12M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="help-content">
+              <section className="help-hero">
+                {/* eslint-disable-next-line @next/next/no-img-element -- Static help screenshot from this local app. */}
+                <img src="/help/v7rc-overview.png" alt="V7RC WebYOLO ByteTrack app overview" />
+                <div>
+                  <h3>System Overview</h3>
+                  <p>
+                    V7RC WebYOLO ByteTrack is a Chrome-first robot perception console. It runs live source
+                    playback, YOLO11n object detection, ByteTrack tracking, lane analysis, bird&apos;s-eye
+                    visualization, local Gemma4-E2B reasoning, and V7RC SRT/PWM robot command previews in the
+                    browser.
+                  </p>
+                </div>
+              </section>
+
+              <section className="help-section">
+                <h3>Quick Start</h3>
+                <ol>
+                  <li>Select a source from the Camera card: Camera, MJPG, RTSP, or YouTube.</li>
+                  <li>Press Start and confirm the video appears in the main camera area.</li>
+                  <li>Check the camera overlay for FPS, YOLO inference time, and ByteTrack time.</li>
+                  <li>Use Bird&apos;s-Eye View to inspect lane IDs, rejected artifacts, and projected tracks.</li>
+                  <li>Press Load on Gemma4-E2B before starting the local reasoning loop.</li>
+                  <li>Use Mock robot mode first. Switch to Armed only after validating the PWM/SRT output.</li>
+                </ol>
+              </section>
+
+              <section className="help-section">
+                <h3>Main Panels</h3>
+                <ul>
+                  <li><strong>Camera View:</strong> live source, detection boxes, track IDs, lane guide, and metrics.</li>
+                  <li><strong>Bird&apos;s-Eye View:</strong> road transform, lane bands, ego lane ID, and debug artifacts.</li>
+                  <li><strong>Robot Task:</strong> Autopilot or Mission mode, safety state, lane offset, and suggested channels.</li>
+                  <li><strong>Robot / V7RC:</strong> Mock/BLE connection, drive mode, suggested SRT, actual SRT, and PWM channels.</li>
+                  <li><strong>Gemma4-E2B:</strong> local multimodal reasoning loop with configurable prompts.</li>
+                </ul>
+              </section>
+
+              <section className="help-section">
+                <h3>Safety Notes</h3>
+                <p>
+                  The system is an experimental closed-loop prototype. Keep the robot in Mock mode while tuning
+                  perception. For real hardware, lift the wheels or disable motors during initial BLE tests. E-stop
+                  latches the robot output until Reset is pressed.
+                </p>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {settingsOpen ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
           <div
@@ -2525,15 +2790,19 @@ export default function Home() {
   );
 }
 
-function buildSceneSummary(tracks: Track[]) {
+function buildSceneSummary(tracks: Track[], safety: SafetyAssessment) {
+  const safetyLine = `安全狀態：${safety.level}，${safety.reason}${safety.hazardTrackId ? `，hazard=${safety.hazardTrackId}` : ""}。`;
+
   if (tracks.length === 0) {
-    return "目前沒有正在追蹤的物件。";
+    return `${safetyLine}\n目前沒有正在追蹤的物件。`;
   }
 
-  return tracks
+  const objectLines = tracks
     .slice(0, 12)
     .map((track) => `${track.id}: ${track.label}，信心值 ${track.confidence.toFixed(2)}`)
     .join("\n");
+
+  return `${safetyLine}\n${objectLines}`;
 }
 
 function chooseCameraDeviceId(devices: MediaDeviceInfo[], currentDeviceId: string) {
@@ -2986,7 +3255,7 @@ function drawBirdViewDetectedLane(
     );
   }
 
-  drawLaneBands(context, laneDetection.laneBands, "bird", laneDetection.egoLaneIndex, (point) =>
+  drawLaneBands(context, laneDetection.laneBands, "bird", laneDetection.egoLaneId, (point) =>
     projectBirdPointToBirdView(point, width, destinationRoad),
   );
 
@@ -3127,7 +3396,7 @@ function drawDetectedLaneLines(
     );
   }
 
-  drawLaneBands(context, laneDetection.laneBands, "source", laneDetection.egoLaneIndex, (point) =>
+  drawLaneBands(context, laneDetection.laneBands, "source", laneDetection.egoLaneId, (point) =>
     sourcePointToStagePoint(source, stageWidth, stageHeight, mirrorPreview, point.x, point.y),
   );
 
@@ -3204,7 +3473,7 @@ function drawLaneBands(
   context: CanvasRenderingContext2D,
   laneBands: LaneBand[],
   space: "bird" | "source",
-  egoLaneIndex: number | null,
+  egoLaneId: number | null,
   project: (point: NormalizedPoint) => { x: number; y: number },
 ) {
   laneBands.forEach((band, index) => {
@@ -3216,7 +3485,8 @@ function drawLaneBands(
 
     const left = leftPath.map(project);
     const right = rightPath.map(project);
-    const isEgoLane = index === egoLaneIndex;
+    const laneId = band.laneId ?? index + 1;
+    const isEgoLane = laneId === egoLaneId;
     const color = isEgoLane
       ? band.inferred
         ? "rgba(251, 146, 60, 0.18)"
@@ -3252,7 +3522,7 @@ function drawLaneBands(
     context.fillStyle = isEgoLane ? (band.inferred ? "#fed7aa" : "#fde68a") : index % 2 === 0 ? "#99f6e4" : "#bfdbfe";
     context.font = "11px ui-sans-serif, system-ui";
     context.fillText(
-      `${isEgoLane ? "ego " : ""}${band.inferred ? "inferred " : ""}lane ${index + 1}`,
+      `${isEgoLane ? "ego " : ""}${band.inferred ? "inferred " : ""}lane ID ${laneId}`,
       (labelAnchor.x + labelPair.x) / 2 - 36,
       (labelAnchor.y + labelPair.y) / 2,
     );
@@ -3310,7 +3580,7 @@ function detectLaneLinesFromSource(
     ? filterLanePathsByHeading(detectedBirdPaths)
     : detectedBirdPaths;
   const pathFilterResult = options.filterArtifacts
-    ? filterOverheadCenterArtifacts(headingFilteredBirdPaths)
+    ? filterCenterSplitArtifacts(filterOverheadCenterArtifacts(headingFilteredBirdPaths))
     : { accepted: headingFilteredBirdPaths, rejected: [] };
   const rejectedArtifactPaths = extendBirdLanePaths(pathFilterResult.rejected);
   const birdPaths = extendBirdLanePaths(pathFilterResult.accepted);
@@ -3481,16 +3751,18 @@ function createLaneDetectionFromBirdPaths(
   const laneBands = createLaneBands(birdPaths, roadCalibration, expectedLaneWidth, inferMissingLane);
   const estimatedLaneWidth = estimateBirdLaneWidth(laneBands, birdPaths, expectedLaneWidth);
   const egoLane = estimateEgoLane(laneBands);
+  const laneBandsWithIds = assignLaneIdsFromEgo(laneBands, egoLane?.index ?? null);
 
   return {
     birdPaths,
     confidence,
     egoLaneCenterOffset: egoLane?.centerOffset ?? null,
     egoLaneHeading: egoLane?.heading ?? null,
+    egoLaneId: egoLane?.laneId ?? null,
     egoLaneIndex: egoLane?.index ?? null,
     estimatedLaneWidth,
     inferMissingLane,
-    laneBands,
+    laneBands: laneBandsWithIds,
     left: sourcePaths.filter((path) => pathAverageX(path) < 0.5),
     rejectedArtifactPaths,
     road: roadCalibration,
@@ -3517,13 +3789,31 @@ function estimateEgoLane(laneBands: LaneBand[]): EgoLaneEstimate | null {
     const heading = centerBottom - centerNear;
     const score = Math.abs(centerOffset);
     if (!best || score < best.score) {
-      best = { centerOffset, heading, index, score };
+      best = { centerOffset, heading, index, laneId: 1, score };
     }
   }
 
   return best && best.score < 0.32
-    ? { centerOffset: best.centerOffset, heading: best.heading, index: best.index }
+    ? { centerOffset: best.centerOffset, heading: best.heading, index: best.index, laneId: 1 }
     : null;
+}
+
+function assignLaneIdsFromEgo(laneBands: LaneBand[], egoLaneIndex: number | null): LaneBand[] {
+  if (egoLaneIndex === null) {
+    return laneBands.map((band, index) => ({ ...band, laneId: index + 1 }));
+  }
+
+  return laneBands.map((band, index) => {
+    if (index === egoLaneIndex) {
+      return { ...band, laneId: 1 };
+    }
+
+    if (index < egoLaneIndex) {
+      return { ...band, laneId: -(egoLaneIndex - index) };
+    }
+
+    return { ...band, laneId: index - egoLaneIndex + 1 };
+  });
 }
 
 function laneBandCenterAtY(band: LaneBand, y: number) {
@@ -3542,7 +3832,127 @@ function isLaneDetectionUsable(detection: LaneDetection) {
   return detection.confidence >= 0.35 && detection.laneBands.length > 0 && detection.egoLaneIndex !== null;
 }
 
-function createAutopilotLaneDecision(detection: LaneDetection | null, laneUsable: boolean) {
+function createClearSafetyAssessment(): SafetyAssessment {
+  return {
+    hazardTrackId: null,
+    level: "clear",
+    reason: "path clear",
+    score: 0,
+  };
+}
+
+function assessAutopilotSafety(
+  tracks: Track[],
+  sourceDimensions: { width: number; height: number } | null,
+  roadCalibration: RoadCalibration,
+): SafetyAssessment {
+  if (!sourceDimensions || sourceDimensions.width <= 0 || sourceDimensions.height <= 0 || tracks.length === 0) {
+    return createClearSafetyAssessment();
+  }
+
+  let strongest = createClearSafetyAssessment();
+
+  for (const track of tracks) {
+    if (!isAutopilotObstacle(track)) {
+      continue;
+    }
+
+    const bottomY = (track.box.y + track.box.height) / sourceDimensions.height;
+    if (bottomY < roadCalibration.topY || bottomY > Math.min(1, roadCalibration.bottomY + 0.05)) {
+      continue;
+    }
+
+    const centerX = (track.box.x + track.box.width / 2) / sourceDimensions.width;
+    const roadProgress = clamp((bottomY - roadCalibration.topY) / Math.max(0.01, roadCalibration.bottomY - roadCalibration.topY), 0, 1);
+    const roadLeftX = lerp(roadCalibration.topLeftX, roadCalibration.bottomLeftX, roadProgress);
+    const roadRightX = lerp(roadCalibration.topRightX, roadCalibration.bottomRightX, roadProgress);
+    const roadWidth = Math.max(0.01, roadRightX - roadLeftX);
+    const lateral = (centerX - (roadLeftX + roadRightX) / 2) / roadWidth;
+    const boxArea = (track.box.width * track.box.height) / (sourceDimensions.width * sourceDimensions.height);
+    const inPathScore = clamp(1 - Math.abs(lateral) / 0.34, 0, 1);
+    const depthScore = clamp((bottomY - roadCalibration.topY) / Math.max(0.01, roadCalibration.bottomY - roadCalibration.topY), 0, 1);
+    const sizeScore = clamp(boxArea / 0.12, 0, 1);
+    const score = clamp(inPathScore * 0.55 + depthScore * 0.3 + sizeScore * 0.15, 0, 1);
+
+    const level: SafetyLevel =
+      score >= 0.72 || (bottomY > 0.68 && Math.abs(lateral) < 0.22)
+        ? "blocked"
+        : score >= 0.46 || (bottomY > 0.58 && Math.abs(lateral) < 0.32)
+          ? "caution"
+          : "clear";
+
+    if (score <= strongest.score || level === "clear") {
+      continue;
+    }
+
+    strongest = {
+      hazardTrackId: track.id,
+      level,
+      reason: `${track.id} ${track.label} near path`,
+      score,
+    };
+  }
+
+  return strongest;
+}
+
+function isAutopilotObstacle(track: Track) {
+  return ["person", "bicycle", "car", "motorcycle", "bus", "truck", "train"].includes(track.label);
+}
+
+function applyRobotSafetyLimits(intent: V7rcRobotIntent, previous: V7rcRobotIntent, elapsedMs: number) {
+  if (intent.emergencyStop || intent.neutral || !intent.autonomy) {
+    return {
+      ...intent,
+      linear: 0,
+      strafe: 0,
+      turn: 0,
+      speedScale: intent.emergencyStop ? 0 : intent.speedScale,
+    };
+  }
+
+  const elapsedSeconds = clamp(elapsedMs / 1000, robotCommandIntervalMs / 1000, 1);
+  const maxLinearDelta = robotSafetyLimits.maxLinearChangePerSecond * elapsedSeconds;
+  const maxStrafeDelta = robotSafetyLimits.maxStrafeChangePerSecond * elapsedSeconds;
+  const maxTurnDelta = robotSafetyLimits.maxTurnChangePerSecond * elapsedSeconds;
+
+  return {
+    ...intent,
+    linear: slewClamp(
+      clamp(intent.linear, -robotSafetyLimits.maxLinear, robotSafetyLimits.maxLinear),
+      previous.linear,
+      maxLinearDelta,
+    ),
+    speedScale: clamp(intent.speedScale, 0, robotSafetyLimits.maxSpeedScale),
+    strafe: slewClamp(
+      clamp(intent.strafe, -robotSafetyLimits.maxStrafe, robotSafetyLimits.maxStrafe),
+      previous.strafe,
+      maxStrafeDelta,
+    ),
+    turn: slewClamp(
+      clamp(intent.turn, -robotSafetyLimits.maxTurn, robotSafetyLimits.maxTurn),
+      previous.turn,
+      maxTurnDelta,
+    ),
+  };
+}
+
+function slewClamp(target: number, previous: number, maxDelta: number) {
+  return previous + clamp(target - previous, -maxDelta, maxDelta);
+}
+
+function createAutopilotLaneDecision(
+  detection: LaneDetection | null,
+  laneUsable: boolean,
+  safety: SafetyAssessment,
+) {
+  if (safety.level === "blocked") {
+    return {
+      intent: createNeutralIntent(),
+      message: `自動駕駛：安全停車，${safety.reason}。`,
+    };
+  }
+
   if (!detection || !laneUsable || detection.egoLaneCenterOffset === null) {
     return {
       intent: createNeutralIntent(),
@@ -3563,7 +3973,7 @@ function createAutopilotLaneDecision(detection: LaneDetection | null, laneUsable
 
   return {
     intent,
-    message: `自動駕駛：車道可用，建議 50% 前進，轉向 ${formatSignedNumber(turn)}。Suggestion 模式只顯示建議；Armed 且已連線才會送出。`,
+    message: `自動駕駛：車道可用，${safety.level === "caution" ? `注意 ${safety.reason}，` : ""}建議 50% 前進，轉向 ${formatSignedNumber(turn)}。Suggestion 模式只顯示建議；Armed 且已連線才會送出。`,
   };
 }
 
@@ -3780,6 +4190,25 @@ function filterOverheadCenterArtifacts(paths: NormalizedPoint[][]) {
   return { accepted, rejected };
 }
 
+function filterCenterSplitArtifacts(result: { accepted: NormalizedPoint[][]; rejected: NormalizedPoint[][] }) {
+  if (result.accepted.length < 3) {
+    return result;
+  }
+
+  const accepted: NormalizedPoint[][] = [];
+  const rejected = [...result.rejected];
+
+  for (const path of result.accepted) {
+    if (looksLikeUngroundedCenterSplit(path, result.accepted)) {
+      rejected.push(path);
+    } else {
+      accepted.push(path);
+    }
+  }
+
+  return { accepted, rejected };
+}
+
 function looksLikeOverheadCenterArtifact(path: NormalizedPoint[]) {
   const range = pathYRange(path);
   const averageX = pathAverageX(path);
@@ -3792,6 +4221,30 @@ function looksLikeOverheadCenterArtifact(path: NormalizedPoint[]) {
   const isAlmostVertical = Math.abs(bottomX - topX) < 0.065 && xRange < 0.08;
 
   return isCentered && isLong && isAlmostVertical;
+}
+
+function looksLikeUngroundedCenterSplit(path: NormalizedPoint[], allPaths: NormalizedPoint[][]) {
+  const range = pathYRange(path);
+  const averageX = pathAverageX(path);
+  const bottomX = pathXAtY(path, 0.88);
+  const topX = pathXAtY(path, 0.24);
+  const isNearEgoCenter = averageX > 0.4 && averageX < 0.6 && bottomX > 0.42 && bottomX < 0.58;
+  if (!isNearEgoCenter) {
+    return false;
+  }
+
+  const hasNeighborOnBothSides =
+    allPaths.some((candidate) => pathXAtY(candidate, 0.86) < bottomX - 0.1) &&
+    allPaths.some((candidate) => pathXAtY(candidate, 0.86) > bottomX + 0.1);
+  if (!hasNeighborOnBothSides) {
+    return false;
+  }
+
+  const bottomSupport = path.filter((point) => point.y >= 0.76).length;
+  const hasGroundSupport = range.max >= 0.84 && bottomSupport >= 2;
+  const isNearlyVertical = Math.abs(bottomX - topX) < 0.08;
+
+  return !hasGroundSupport && isNearlyVertical;
 }
 
 function extendBirdLanePaths(paths: NormalizedPoint[][]) {
@@ -4045,6 +4498,7 @@ function emptyLaneDetection(roadCalibration: RoadCalibration): LaneDetection {
     confidence: 0,
     egoLaneCenterOffset: null,
     egoLaneHeading: null,
+    egoLaneId: null,
     egoLaneIndex: null,
     estimatedLaneWidth: null,
     inferMissingLane: true,
@@ -4255,6 +4709,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function lerp(from: number, to: number, amount: number) {
+  return from + (to - from) * amount;
+}
+
 function formatDuration(milliseconds: number) {
   if (milliseconds < 1000) {
     return `${Math.round(milliseconds)} ms`;
@@ -4314,9 +4772,19 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusCard({ status, action, progress }: { status: RuntimeStatus; action?: ReactNode; progress?: number | null }) {
+function StatusCard({
+  status,
+  action,
+  progress,
+  compact = false,
+}: {
+  status: RuntimeStatus;
+  action?: ReactNode;
+  progress?: number | null;
+  compact?: boolean;
+}) {
   return (
-    <div className="status-card">
+    <div className={compact ? "status-card compact-status-card" : "status-card"}>
       <div className="status-title">
         <div className="status-heading">
           <span className={`status-dot ${status.state}`} />
