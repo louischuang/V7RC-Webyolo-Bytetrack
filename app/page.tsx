@@ -94,6 +94,14 @@ type MissionActionPreview = {
   action: MissionAction;
   channels: ReturnType<typeof previewSrtChannels>;
 };
+type MissionExecutionState = {
+  active: boolean;
+  actionIndex: number;
+  elapsedMs: number;
+  remainingMs: number;
+  framesSent: number;
+  currentIntent: V7rcRobotIntent;
+};
 type SafetyAssessment = {
   hazardTrackId: string | null;
   level: SafetyLevel;
@@ -318,6 +326,7 @@ export default function Home() {
   const robotLastStatusUpdateRef = useRef(0);
   const robotLastIntentUpdateRef = useRef(0);
   const robotLimitedIntentRef = useRef<V7rcRobotIntent>(createNeutralIntent());
+  const safetyAssessmentRef = useRef<SafetyAssessment>(createClearSafetyAssessment());
   const laneDetectionRef = useRef<LaneDetection | null>(null);
   const roadCalibrationRef = useRef<RoadCalibration>(
     createManualRoadCalibration(
@@ -407,6 +416,7 @@ export default function Home() {
   const [robotTaskMessage, setRobotTaskMessage] = useState("選擇任務模式後按 Start。");
   const [missionPlan, setMissionPlan] = useState<MissionPlan | null>(null);
   const [missionPlanError, setMissionPlanError] = useState("");
+  const [missionExecution, setMissionExecution] = useState<MissionExecutionState>(() => createIdleMissionExecution());
   const [autopilotSuggestion, setAutopilotSuggestion] = useState<V7rcRobotIntent>(() => createNeutralIntent());
   const [safetyAssessment, setSafetyAssessment] = useState<SafetyAssessment>(() => createClearSafetyAssessment());
   const [laneConfidence, setLaneConfidence] = useState(0);
@@ -461,9 +471,10 @@ export default function Home() {
   );
 
   const robotChannelPreview = useMemo(() => previewSrtChannels(robotIntent, robotDriveMode).slice(0, 4), [robotDriveMode, robotIntent]);
+  const taskSuggestionIntent = robotTaskMode === "mission" ? missionExecution.currentIntent : autopilotSuggestion;
   const autopilotChannelPreview = useMemo(
-    () => previewSrtChannels(autopilotSuggestion, robotDriveMode).slice(0, 4),
-    [autopilotSuggestion, robotDriveMode],
+    () => previewSrtChannels(taskSuggestionIntent, robotDriveMode).slice(0, 4),
+    [robotDriveMode, taskSuggestionIntent],
   );
 
   const robotPacketPreview = useMemo(
@@ -471,8 +482,8 @@ export default function Home() {
     [robotDriveMode, robotIntent],
   );
   const autopilotPacketPreview = useMemo(
-    () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(autopilotSuggestion, robotDriveMode))),
-    [autopilotSuggestion, robotDriveMode],
+    () => frameToDebugString(encodeSrtFrame(intentToSrtPwm(taskSuggestionIntent, robotDriveMode))),
+    [robotDriveMode, taskSuggestionIntent],
   );
   const missionActionPreviews = useMemo<MissionActionPreview[]>(
     () =>
@@ -510,7 +521,10 @@ export default function Home() {
     }
 
     if (missionPlan) {
-      return `Mission plan ${missionPlan.missionStatus}: ${missionPlan.message}. ${missionPlan.actions.length} action(s), ${missionPlan.planDurationMs} ms total.`;
+      const executionText = missionExecution.active
+        ? ` Executing action ${missionExecution.actionIndex + 1}/${missionPlan.actions.length}, ${missionExecution.remainingMs} ms left, ${missionExecution.framesSent} SRT frame(s).`
+        : " Waiting for the next command slice.";
+      return `Mission plan ${missionPlan.missionStatus}: ${missionPlan.message}. ${missionPlan.actions.length} action(s), ${missionPlan.planDurationMs} ms total.${executionText}`;
     }
 
     return "Gemma JSON mission planner pending; valid plans are previewed before they are converted into 30ms SRT frames.";
@@ -525,6 +539,10 @@ export default function Home() {
     laneConfidence,
     missionPlan,
     missionPlanError,
+    missionExecution.actionIndex,
+    missionExecution.active,
+    missionExecution.framesSent,
+    missionExecution.remainingMs,
     robotTaskMode,
     roiConfidence,
     safetyAssessment.level,
@@ -1406,6 +1424,10 @@ export default function Home() {
     robotDriveModeRef.current = robotDriveMode;
   }, [robotDriveMode]);
 
+  useEffect(() => {
+    safetyAssessmentRef.current = safetyAssessment;
+  }, [safetyAssessment]);
+
   const connectMockRobot = useCallback(async () => {
     setRobotError("");
     const transport = createMockV7rcTransport();
@@ -1508,6 +1530,7 @@ export default function Home() {
       setRobotTaskMessage("任務已停止，等待下一次 Start。");
       setMissionPlan(null);
       setMissionPlanError("");
+      setMissionExecution(createIdleMissionExecution());
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
       sendRobotIntent(createNeutralIntent());
@@ -1517,6 +1540,7 @@ export default function Home() {
     setRobotTaskStatus("running");
     setMissionPlan(null);
     setMissionPlanError("");
+    setMissionExecution(createIdleMissionExecution());
     if (robotTaskMode === "autopilot") {
       setAutopilotSuggestion(createNeutralIntent());
       setSafetyAssessment(createClearSafetyAssessment());
@@ -1527,6 +1551,90 @@ export default function Home() {
 
     setRobotTaskMessage("解任務啟動：等待 Gemma 產生短 JSON 動作計畫。");
   }, [emergencyStopLatched, robotTaskMode, robotTaskStatus, sendRobotIntent]);
+
+  useEffect(() => {
+    if (robotTaskMode !== "mission" || robotTaskStatus !== "running" || !missionPlan || missionPlanError) {
+      queueMicrotask(() => setMissionExecution(createIdleMissionExecution()));
+      return;
+    }
+
+    if (missionPlan.missionStatus !== "running") {
+      queueMicrotask(() => {
+        setMissionExecution(createIdleMissionExecution());
+        sendRobotIntent(createNeutralIntent());
+      });
+      return;
+    }
+
+    const startedAt = performance.now();
+    let framesSent = 0;
+    let lastUiUpdateAt = 0;
+    let stopped = false;
+
+    const applyMissionCommand = () => {
+      if (stopped) {
+        return;
+      }
+
+      if (emergencyStopLatched) {
+        setMissionExecution(createIdleMissionExecution());
+        sendRobotIntent(createNeutralIntent());
+        return;
+      }
+
+      const safety = safetyAssessmentRef.current;
+      if (safety.level === "blocked") {
+        setMissionExecution(createIdleMissionExecution());
+        setRobotTaskStatus("blocked");
+        setRobotTaskMessage(`Mission safety stop: ${safety.reason}`);
+        sendRobotIntent(createNeutralIntent());
+        return;
+      }
+
+      const elapsedMs = performance.now() - startedAt;
+      const command = getMissionActionAtElapsed(missionPlan, elapsedMs);
+      if (!command) {
+        setMissionExecution(createIdleMissionExecution());
+        sendRobotIntent(createNeutralIntent());
+        return;
+      }
+
+      const nextIntent = missionActionToIntent(command.action);
+      const armedForOutput = robotMode === "armed" && robotStatus.connected && !nextIntent.neutral;
+      if (armedForOutput) {
+        sendRobotIntent(nextIntent);
+      } else if (!robotIntentRef.current.neutral) {
+        sendRobotIntent(createNeutralIntent());
+      }
+
+      framesSent += 1;
+      const now = performance.now();
+      if (now - lastUiUpdateAt >= 90 || command.remainingMs <= robotCommandIntervalMs) {
+        lastUiUpdateAt = now;
+        setMissionExecution({
+          active: true,
+          actionIndex: command.index,
+          currentIntent: nextIntent,
+          elapsedMs: Math.round(elapsedMs),
+          framesSent,
+          remainingMs: command.remainingMs,
+        });
+      }
+    };
+
+    const firstTick = window.setTimeout(applyMissionCommand, 0);
+    const interval = window.setInterval(applyMissionCommand, robotCommandIntervalMs);
+
+    return () => {
+      stopped = true;
+      window.clearTimeout(firstTick);
+      window.clearInterval(interval);
+      queueMicrotask(() => {
+        setMissionExecution(createIdleMissionExecution());
+        sendRobotIntent(createNeutralIntent());
+      });
+    };
+  }, [emergencyStopLatched, missionPlan, missionPlanError, robotMode, robotStatus.connected, robotTaskMode, robotTaskStatus, sendRobotIntent]);
 
   const applyAutopilotLaneDecision = useCallback(
     (detection: LaneDetection | null, laneUsable: boolean, safety: SafetyAssessment) => {
@@ -2071,6 +2179,7 @@ export default function Home() {
                     setRobotTaskStatus("idle");
                     setMissionPlan(null);
                     setMissionPlanError("");
+                    setMissionExecution(createIdleMissionExecution());
                     setAutopilotSuggestion(createNeutralIntent());
                     setSafetyAssessment(createClearSafetyAssessment());
                     setRobotTaskMessage(mode.id === "autopilot" ? "自動駕駛待命。" : "解任務待命。");
@@ -2149,7 +2258,10 @@ export default function Home() {
                 {missionPlan ? (
                   <div className="mission-action-list">
                     {missionActionPreviews.map((preview, index) => (
-                      <div className="mission-action-row" key={`${preview.action.move}-${index}`}>
+                      <div
+                        className={`mission-action-row ${missionExecution.active && missionExecution.actionIndex === index ? "active" : ""}`}
+                        key={`${preview.action.move}-${index}`}
+                      >
                         <span>{index + 1}</span>
                         <strong>{preview.action.move}</strong>
                         <span>{preview.action.ms} ms</span>
@@ -2161,6 +2273,10 @@ export default function Home() {
                         </code>
                       </div>
                     ))}
+                    <div className="mission-execution-meta">
+                      <span>{missionExecution.active ? `${missionExecution.elapsedMs} ms elapsed` : "sequence idle"}</span>
+                      <span>{robotMode === "armed" && robotStatus.connected ? "armed output" : "preview only"}</span>
+                    </div>
                   </div>
                 ) : (
                   <p>Start Mission mode and run Gemma to preview a validated JSON action plan.</p>
@@ -2561,7 +2677,7 @@ export default function Home() {
               <small>BLE connected 後每 {robotCommandIntervalMs}ms 以 SRT 格式送出目前 Channel 狀態。</small>
             </div>
             <div className="robot-packet suggestion-packet">
-              <span>Autopilot suggestion</span>
+              <span>{robotTaskMode === "mission" ? "Mission suggestion" : "Autopilot suggestion"}</span>
               <code>{autopilotPacketPreview}</code>
             </div>
             <div className="robot-channel-table suggestion-channel-table">
@@ -4011,6 +4127,17 @@ function isMissionMove(value: string): value is MissionMove {
   return ["forward", "backward", "left", "right", "turn_left", "turn_right", "stop"].includes(value);
 }
 
+function createIdleMissionExecution(): MissionExecutionState {
+  return {
+    active: false,
+    actionIndex: -1,
+    currentIntent: createNeutralIntent(),
+    elapsedMs: 0,
+    framesSent: 0,
+    remainingMs: 0,
+  };
+}
+
 function missionStatusToTaskStatus(status: MissionStatus): RobotTaskStatus {
   if (status === "complete") {
     return "complete";
@@ -4029,6 +4156,25 @@ function missionStatusToTaskStatus(status: MissionStatus): RobotTaskStatus {
   }
 
   return "running";
+}
+
+function getMissionActionAtElapsed(plan: MissionPlan, elapsedMs: number) {
+  let cursor = 0;
+
+  for (let index = 0; index < plan.actions.length; index += 1) {
+    const action = plan.actions[index];
+    const end = cursor + action.ms;
+    if (elapsedMs < end) {
+      return {
+        action,
+        index,
+        remainingMs: Math.max(0, Math.round(end - elapsedMs)),
+      };
+    }
+    cursor = end;
+  }
+
+  return null;
 }
 
 function missionActionToIntent(action: MissionAction): V7rcRobotIntent {

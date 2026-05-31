@@ -575,6 +575,13 @@ input {
   padding-top: 6px;
 }
 
+.mission-action-row.active {
+  border-color: rgba(45, 212, 191, 0.5);
+  border-radius: 6px;
+  background: rgba(45, 212, 191, 0.12);
+  padding: 6px;
+}
+
 .mission-action-row:first-child {
   border-top: 0;
   padding-top: 0;
@@ -590,6 +597,15 @@ input {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mission-execution-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .birdview-card {

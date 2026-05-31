@@ -284,12 +284,12 @@ Next planning target:
 - [ ] Use JSON-only prompt instructions in Chinese and reject Markdown responses.
 - [x] Add mission payload schema with `version`, `message`, `missionStatus`, `planDurationMs`, and `actions`.
 - [ ] Support action moves: `forward`, `backward`, `turn_left`, `turn_right`, `strafe_left`, `strafe_right`, and `stop`.
-- [ ] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
+- [x] Convert LLM action `ms` durations into repeated 30ms V7RC `SRT` command frames.
 - [x] Add first-pass JSON parsing, schema validation, and fallback-to-neutral preview behavior for invalid Gemma output.
 - [ ] Add current track summary, target color hints, recent command state, drive mode, bird's-eye state, and task goal to the Gemma prompt.
 - [ ] Add color sampling inside tracked bounding boxes for target colors such as red, blue, green, yellow, black, and white.
-- [ ] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
-- [ ] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
+- [x] Translate `GemmaAction.intent` into normalized V7RC channel values through a safety controller.
+- [x] Clamp linear, turn, strafe, speed scale, and arm values before protocol encoding.
 - [ ] Display the last mission `message`, including target-visible messages and `任務完成` / `mission complete`.
 - [ ] Add loop metrics: Gemma inference time, command validation time, Bluetooth write time, command rate, and last stop reason.
 - [ ] Store goal/control settings in browser local storage.
